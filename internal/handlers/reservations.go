@@ -96,3 +96,24 @@ func idempotencyKey(c *gin.Context, fromBody *string) (string, bool) {
 	}
 	return parsed.String(), true
 }
+
+func (h *Handlers) Cancel(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(c, http.StatusBadRequest, "validation_error",
+			"Reservation id must be a UUID, as returned by POST /shows/{id}/reserve.",
+			map[string]any{"field": "id"})
+		return
+	}
+
+	result, err := h.reservations.Cancel(c.Request.Context(), middleware.UserID(c), id)
+	switch {
+	case errors.Is(err, service.ErrReservationNotFound):
+		writeError(c, http.StatusNotFound, "reservation_not_found",
+			"No reservation with this id exists for your account.", map[string]any{"reservation_id": id})
+	case err != nil:
+		writeInternalError(c, err)
+	default:
+		c.JSON(http.StatusOK, result.Reservation)
+	}
+}

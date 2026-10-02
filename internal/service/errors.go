@@ -2,7 +2,10 @@ package service
 
 import "errors"
 
-var ErrShowNotFound = errors.New("show not found")
+var (
+	ErrShowNotFound        = errors.New("show not found")
+	ErrReservationNotFound = errors.New("reservation not found")
+)
 
 // ValidationError is a client mistake (HTTP 400). Details carries the specific
 // offending values so the client can fix the request without guessing.

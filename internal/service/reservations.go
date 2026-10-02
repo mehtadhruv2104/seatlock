@@ -258,3 +258,59 @@ func seatPhraseDo(labels []string) string {
 	}
 	return "Seats " + strings.Join(labels, ", ") + " do"
 }
+
+type CancelResult struct {
+	Reservation      model.Reservation
+	AlreadyCancelled bool
+}
+
+// Cancel releases a reservation's seats (DESIGN.md §6). Locks: reservation
+// row, then its seats in sorted order, consistent with reserve's lock order.
+// Cancelling twice is harmless and returns the cancelled reservation. A
+// reservation that isn't the caller's is reported as not found, so its
+// existence isn't revealed.
+func (s *ReservationService) Cancel(ctx context.Context, userID, reservationID string) (CancelResult, error) {
+	var result CancelResult
+	err := s.store.WithTx(ctx, func(tx *db.Tx) error {
+		r, err := tx.LockReservation(ctx, reservationID)
+		if errors.Is(err, db.ErrNotFound) {
+			return ErrReservationNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if r.UserID != userID {
+			return ErrReservationNotFound
+		}
+		if r.Status == model.ReservationCancelled {
+			result = CancelResult{Reservation: r, AlreadyCancelled: true}
+			return nil
+		}
+
+		locked, err := tx.LockReservationSeats(ctx, r.ID)
+		if err != nil {
+			return err
+		}
+		released, err := tx.ReleaseSeats(ctx, r.ID)
+		if err != nil {
+			return err
+		}
+		if released != int64(len(r.Seats)) || int(released) != locked {
+			log.Printf("CANCEL MISMATCH: reservation %s lists %d seats, locked %d, released %d",
+				r.ID, len(r.Seats), locked, released)
+		}
+
+		at, err := tx.MarkCancelled(ctx, r.ID)
+		if err != nil {
+			return err
+		}
+		r.Status = model.ReservationCancelled
+		r.CancelledAt = &at
+		result = CancelResult{Reservation: r}
+		return nil
+	})
+	if err != nil {
+		return CancelResult{}, err
+	}
+	return result, nil
+}

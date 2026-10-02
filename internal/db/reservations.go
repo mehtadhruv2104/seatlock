@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/dhruvmehta/seatlock/internal/model"
 	"github.com/jackc/pgx/v5"
@@ -32,11 +33,63 @@ func (t *Tx) ClaimReservation(ctx context.Context, showID, userID, key string, s
 func (t *Tx) GetReservationByKey(ctx context.Context, userID, key string) (model.Reservation, error) {
 	var r model.Reservation
 	err := t.tx.QueryRow(ctx, `
-		SELECT id, show_id, user_id, seats, amount_paise, status
+		SELECT id, show_id, user_id, seats, amount_paise, status, cancelled_at
 		FROM reservations WHERE user_id = $1 AND idempotency_key = $2`,
 		userID, key,
-	).Scan(&r.ID, &r.ShowID, &r.UserID, &r.Seats, &r.AmountPaise, &r.Status)
+	).Scan(&r.ID, &r.ShowID, &r.UserID, &r.Seats, &r.AmountPaise, &r.Status, &r.CancelledAt)
 	return r, err
+}
+
+// LockReservation row-locks a reservation so concurrent cancels of the same
+// reservation run one at a time.
+func (t *Tx) LockReservation(ctx context.Context, id string) (model.Reservation, error) {
+	var r model.Reservation
+	err := t.tx.QueryRow(ctx, `
+		SELECT id, show_id, user_id, seats, amount_paise, status, cancelled_at
+		FROM reservations WHERE id = $1
+		FOR UPDATE`, id,
+	).Scan(&r.ID, &r.ShowID, &r.UserID, &r.Seats, &r.AmountPaise, &r.Status, &r.CancelledAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Reservation{}, ErrNotFound
+	}
+	return r, err
+}
+
+// LockReservationSeats row-locks the reservation's seats in seat_label order,
+// the same order reserve uses. An unordered UPDATE here could deadlock with a
+// reserve that has locked one of these seats and is waiting for another.
+func (t *Tx) LockReservationSeats(ctx context.Context, reservationID string) (int, error) {
+	rows, err := t.tx.Query(ctx, `
+		SELECT id FROM seats WHERE reservation_id = $1
+		ORDER BY seat_label
+		FOR UPDATE`, reservationID)
+	if err != nil {
+		return 0, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	return len(ids), err
+}
+
+// ReleaseSeats returns the reservation's seats to available. Only seats still
+// pointing at this reservation are touched, so a cancel can never release a
+// seat that belongs to someone else.
+func (t *Tx) ReleaseSeats(ctx context.Context, reservationID string) (int64, error) {
+	tag, err := t.tx.Exec(ctx, `
+		UPDATE seats SET status = 'available', user_id = NULL, reservation_id = NULL
+		WHERE reservation_id = $1 AND status = 'confirmed'`, reservationID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (t *Tx) MarkCancelled(ctx context.Context, id string) (time.Time, error) {
+	var at time.Time
+	err := t.tx.QueryRow(ctx, `
+		UPDATE reservations SET status = 'cancelled', cancelled_at = now()
+		WHERE id = $1
+		RETURNING cancelled_at`, id).Scan(&at)
+	return at, err
 }
 
 // LockUser takes the per-(show, user) lock row, creating it on first use, so

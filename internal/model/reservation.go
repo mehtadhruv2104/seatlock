@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type ReservationStatus string
 
 const (
@@ -14,4 +16,5 @@ type Reservation struct {
 	Seats       []string          `json:"seats"`
 	AmountPaise int64             `json:"amount_paise"`
 	Status      ReservationStatus `json:"status"`
+	CancelledAt *time.Time        `json:"cancelled_at,omitempty"`
 }

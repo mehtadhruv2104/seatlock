@@ -17,6 +17,7 @@ func New(h *handlers.Handlers) *gin.Engine {
 
 	user := r.Group("/", middleware.RequireUser())
 	user.POST("/shows/:id/reserve", h.Reserve)
+	user.POST("/reservations/:id/cancel", h.Cancel)
 
 	return r
 }
