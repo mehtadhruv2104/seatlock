@@ -5,11 +5,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func New() *gin.Engine {
+func New(h *handlers.Handlers) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", handlers.Healthz)
+
+	r.POST("/shows", h.CreateShow)
 
 	return r
 }

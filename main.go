@@ -11,7 +11,9 @@ import (
 
 	"github.com/dhruvmehta/seatlock/internal/config"
 	"github.com/dhruvmehta/seatlock/internal/db"
+	"github.com/dhruvmehta/seatlock/internal/handlers"
 	"github.com/dhruvmehta/seatlock/internal/router"
+	"github.com/dhruvmehta/seatlock/internal/service"
 )
 
 func main() {
@@ -33,9 +35,12 @@ func main() {
 		log.Fatalf("migrations: %v", err)
 	}
 
+	store := db.NewStore(pool)
+	h := handlers.New(service.NewShowService(store))
+
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: router.New(),
+		Handler: router.New(h),
 	}
 
 	go func() {
