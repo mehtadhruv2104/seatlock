@@ -322,6 +322,44 @@ script against the live deploy, based on what the results actually show.
 
 ---
 
+## 13. Enhancements (documented, not built)
+
+Improvements we've identified and deliberately left out of this build, with
+enough detail to implement later. Performance items awaiting burst results are
+tracked separately in §11.
+
+### E1. Signed user tokens
+
+**Today:** `Authorization: Bearer <user_token>`, where the token *is* the user id
+(§7, change log 2026-10-03). This keeps testing simple: the burst script and the
+graders can use any string as a distinct user.
+
+**Gap:** anyone who knows or guesses another user's token string can act as that
+user, and the token shows up in responses, logs and the database as `user_id`.
+The spec's identity requirement (a spoofed `user_id` in the body is ignored, and
+users can only cancel their own reservations) is already met, because identity
+never comes from the body. This enhancement closes the remaining gap: forging a
+token.
+
+**Design:**
+- Tokens are signed: either a JWT (HS256) or `base64(user_id).base64(HMAC-SHA256(secret, user_id))`.
+  The secret lives in an env var, never in code.
+- The middleware verifies the signature (constant-time comparison) and extracts
+  `user_id`. A bad or missing signature gets a 401. Handlers don't change: they
+  already read the user from `middleware.UserID`.
+- Add an expiry claim (`exp`) so a leaked token stops working; reject expired
+  tokens with a 401 that says so.
+- Support key rotation by tagging tokens with a key id (`kid`) and accepting the
+  current and previous secrets during a rotation window.
+- Since `user_id` is no longer a secret, it's safe to log and return.
+
+**Cost to testing:** clients need a way to get tokens. Options: an endpoint
+protected by the admin key that mints tokens for given user ids, or a small CLI
+(`go run ./cmd/token alice`). The burst script would mint its users' tokens once
+up front.
+
+---
+
 ## Change log
 
 Append-only. Format: date, what changed, why, which section it supersedes.
@@ -378,3 +416,6 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   unchanged within noise. Safe outside the transaction because a show's seats
   never change after creation; the in-transaction check remains as a backstop.
   The same query can later return seat status for the deferred P2 pre-check (§11).
+- **2026-10-03 — Added §13 Enhancements.** A place for improvements we've
+  deliberately not built. First entry: E1, signed user tokens. For this build the
+  token stays equal to the user id; E1 documents the production approach.
