@@ -40,7 +40,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: router.New(h),
+		Handler: router.New(h, cfg.AdminKey),
 	}
 
 	go func() {

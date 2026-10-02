@@ -6,13 +6,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func New(h *handlers.Handlers) *gin.Engine {
+func New(h *handlers.Handlers, adminKey string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", handlers.Healthz)
 
-	r.POST("/shows", h.CreateShow)
+	r.POST("/shows", middleware.RequireAdmin(adminKey), h.CreateShow)
 	r.GET("/shows/:id", h.GetShow)
 
 	user := r.Group("/", middleware.RequireUser())
