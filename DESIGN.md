@@ -328,3 +328,13 @@ Append-only. Format: date, what changed, why, which section it supersedes.
 
 - **2026-10-02 — Baseline.** Sections 1–12 agreed after the design discussion,
   before implementation started.
+- **2026-10-03 — Migrations via goose; schema additions to §8.**
+  - Migrations use goose (pressly/goose v3.26.0, the newest release supporting
+    Go 1.24). SQL files are embedded in the binary and applied on startup, so a
+    fresh clone or deploy creates its own schema with no separate step.
+  - Added to the §8 schema: a `seats_owner_matches_status` CHECK constraint
+    (a seat has `user_id`/`reservation_id` exactly when it isn't `available`), so
+    the database itself rejects a sold seat with no owner or an available seat
+    with one. Defense in depth alongside the §4 safeguard.
+  - Added a partial index `seats (show_id, user_id) WHERE user_id IS NOT NULL`
+    to serve the per-user limit count in §4 step 2.
