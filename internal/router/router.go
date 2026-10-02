@@ -22,6 +22,7 @@ func New(h *handlers.Handlers, adminKey string) *gin.Engine {
 	r.NoMethod(handlers.MethodNotAllowed)
 
 	r.GET("/healthz", handlers.Healthz)
+	r.GET("/readyz", h.Readyz)
 
 	r.POST("/shows", middleware.RequireAdmin(adminKey), h.CreateShow)
 	r.GET("/shows/:id", h.GetShow)

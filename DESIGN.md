@@ -433,3 +433,12 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   Request bodies are capped at 8 MiB (413 `payload_too_large`); a 100k-seat show
   is about 1 MB. Timestamps are returned in UTC: pgx otherwise converts them to
   the server's local timezone.
+- **2026-10-03 — Readiness probe.** `GET /readyz` pings the database with a 2s
+  timeout: 200 `ready`, or 503 `database_unreachable` (details logged, not
+  returned). `/healthz` never touches the database. Verified with the database
+  up, frozen (503 after 2.0s), stopped (503 immediately) and restarted (back to
+  200 without restarting the app). Considered and dropped: failing `/readyz`
+  during shutdown. `srv.Shutdown` closes the listener immediately, so no new
+  request could see it; it only helps with a pre-shutdown delay under an
+  orchestrator that keeps probing during shutdown (e.g. Kubernetes), and Railway
+  only uses health checks at deploy time. Refines §10.

@@ -45,7 +45,7 @@ func main() {
 	}
 
 	store := db.NewStore(pool)
-	h := handlers.New(service.NewShowService(store), service.NewReservationService(store))
+	h := handlers.New(store, service.NewShowService(store), service.NewReservationService(store))
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
