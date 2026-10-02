@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -12,14 +13,22 @@ import (
 	"github.com/dhruvmehta/seatlock/internal/config"
 	"github.com/dhruvmehta/seatlock/internal/db"
 	"github.com/dhruvmehta/seatlock/internal/handlers"
+	"github.com/dhruvmehta/seatlock/internal/logging"
 	"github.com/dhruvmehta/seatlock/internal/router"
 	"github.com/dhruvmehta/seatlock/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	logging.Init()
+	// Gin's debug mode prints plain-text banners into otherwise JSON logs.
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		fatal("invalid configuration", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -27,12 +36,12 @@ func main() {
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		fatal("database unreachable", err)
 	}
 	defer pool.Close()
 
 	if err := db.Migrate(ctx, pool); err != nil {
-		log.Fatalf("migrations: %v", err)
+		fatal("migrations failed", err)
 	}
 
 	store := db.NewStore(pool)
@@ -44,19 +53,24 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("listening on :%s", cfg.Port)
+		slog.Info("listening", "port", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			fatal("server error", err)
 		}
 	}()
 
 	<-ctx.Done()
-	log.Println("shutting down")
+	slog.Info("shutting down")
 
 	// Let in-flight requests (e.g. a reserve transaction) finish before exiting.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("forced shutdown: %v", err)
+		slog.Error("forced shutdown", "error", err.Error())
 	}
+}
+
+func fatal(msg string, err error) {
+	slog.Error(msg, "error", err.Error())
+	os.Exit(1)
 }

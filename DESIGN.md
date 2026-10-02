@@ -419,3 +419,11 @@ Append-only. Format: date, what changed, why, which section it supersedes.
 - **2026-10-03 — Added §13 Enhancements.** A place for improvements we've
   deliberately not built. First entry: E1, signed user tokens. For this build the
   token stays equal to the user id; E1 documents the production approach.
+- **2026-10-03 — Logging uses Go's `log/slog`, not zerolog.** The standard
+  library's JSON handler does everything §10 needs, without a dependency. One
+  access-log line per request: `request_id`, method, route, path, status,
+  `latency_ms`, `user_id` (when authenticated) and the decline `reason` (on
+  errors). A caller-supplied `X-Request-Id` is reused if it's sane (≤128
+  printable ASCII characters), otherwise one is generated; either way it's
+  echoed in the response. Migration output and the safeguard/cancel-mismatch
+  warnings go through the same logger, so every line is JSON. Refines §10.

@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"reflect"
 
+	"github.com/dhruvmehta/seatlock/internal/logging"
+	"github.com/dhruvmehta/seatlock/internal/middleware"
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +21,7 @@ func writeError(c *gin.Context, status int, reason, message string, extra map[st
 	for k, v := range extra {
 		body[k] = v
 	}
+	c.Set(middleware.ReasonKey, reason)
 	c.JSON(status, body)
 }
 
@@ -36,7 +38,7 @@ func writeDecline(c *gin.Context, de *service.DeclineError) {
 }
 
 func writeInternalError(c *gin.Context, err error) {
-	log.Printf("internal error on %s %s: %v", c.Request.Method, c.FullPath(), err)
+	logging.FromContext(c.Request.Context()).Error("internal error", "route", c.FullPath(), "error", err.Error())
 	writeError(c, http.StatusInternalServerError, "internal_error",
 		"Something went wrong on our side. Please retry.", nil)
 }

@@ -8,7 +8,7 @@ import (
 
 func New(h *handlers.Handlers, adminKey string) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(middleware.RequestLog(), gin.Recovery())
 
 	r.GET("/healthz", handlers.Healthz)
 

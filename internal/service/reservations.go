@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"slices"
 	"strings"
 
 	"github.com/dhruvmehta/seatlock/internal/db"
+	"github.com/dhruvmehta/seatlock/internal/logging"
 	"github.com/dhruvmehta/seatlock/internal/model"
 )
 
@@ -148,8 +148,8 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 			return err
 		}
 		if affected != int64(n) {
-			log.Printf("SAFEGUARD TRIPPED: confirmed %d of %d locked seats (show %s, user %s, seats %v)",
-				affected, n, show.ID, in.UserID, labels)
+			logging.FromContext(ctx).Error("safeguard tripped: locked seats were not all confirmed",
+				"show_id", show.ID, "user_id", in.UserID, "seats", labels, "confirmed", affected, "expected", n)
 			return &DeclineError{
 				Reason:  ReasonSeatTaken,
 				Message: "Some of these seats are no longer available. No seats were reserved.",
@@ -296,8 +296,8 @@ func (s *ReservationService) Cancel(ctx context.Context, userID, reservationID s
 			return err
 		}
 		if released != int64(len(r.Seats)) || int(released) != locked {
-			log.Printf("CANCEL MISMATCH: reservation %s lists %d seats, locked %d, released %d",
-				r.ID, len(r.Seats), locked, released)
+			logging.FromContext(ctx).Error("cancel mismatch: seats released differ from reservation",
+				"reservation_id", r.ID, "listed", len(r.Seats), "locked", locked, "released", released)
 		}
 
 		at, err := tx.MarkCancelled(ctx, r.ID)
