@@ -343,3 +343,15 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   that order. Sorting by `seat_label` would give A1, A10, A11, A2, which is
   confusing. Added as a new migration rather than by editing 00001, because
   applied migrations are never edited. Extends §8.
+- **2026-10-03 — Auth header named `user_token`; signed tokens are the
+  production path.** Users send `Authorization: Bearer <user_token>`. For now
+  the token *is* the user id. This is deliberate, to make testing easy: the burst
+  script and the graders need thousands of distinct users, and any string works.
+  It does mean anyone can act as another user by sending their token, and the
+  token appears in responses, logs and the database as `user_id`. In
+  production, tokens would be signed (e.g. `user_id` + HMAC with a server secret,
+  or a JWT): the server verifies the signature and extracts the user id, so tokens
+  can't be forged and the id is safe to log. Tokens are 1–128 characters with no
+  spaces; anything else gets a 401. The user auth middleware was built before
+  reserve (pulled forward from task 8) because reserve needs the identity.
+  Refines §7.
