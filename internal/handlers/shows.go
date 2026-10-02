@@ -6,6 +6,7 @@ import (
 
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // Pointers distinguish "field missing" from "field set to zero value".
@@ -50,5 +51,25 @@ func (h *Handlers) CreateShow(c *gin.Context) {
 		writeInternalError(c, err)
 	default:
 		c.JSON(http.StatusCreated, detail)
+	}
+}
+
+func (h *Handlers) GetShow(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(c, http.StatusBadRequest, "validation_error",
+			"Show id must be a UUID, as returned by POST /shows.", map[string]any{"field": "id"})
+		return
+	}
+
+	detail, err := h.shows.GetShow(c.Request.Context(), id)
+	switch {
+	case errors.Is(err, service.ErrShowNotFound):
+		writeError(c, http.StatusNotFound, "show_not_found", "No show exists with this id.",
+			map[string]any{"show_id": id})
+	case err != nil:
+		writeInternalError(c, err)
+	default:
+		c.JSON(http.StatusOK, detail)
 	}
 }

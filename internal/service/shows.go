@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -118,4 +119,34 @@ func validateCreateShow(in CreateShowInput, limit int) error {
 		return &ValidationError{Field: "per_user_limit", Message: "per_user_limit must be at least 1."}
 	}
 	return nil
+}
+
+func (s *ShowService) GetShow(ctx context.Context, id string) (model.ShowDetail, error) {
+	show, err := s.store.GetShow(ctx, id)
+	if errors.Is(err, db.ErrNotFound) {
+		return model.ShowDetail{}, ErrShowNotFound
+	}
+	if err != nil {
+		return model.ShowDetail{}, err
+	}
+
+	seats, err := s.store.ListSeats(ctx, id)
+	if err != nil {
+		return model.ShowDetail{}, err
+	}
+
+	// Counted from the same rows we return, so available + held + confirmed
+	// == total by construction (the reconciliation invariant).
+	counts := model.SeatCounts{Total: len(seats)}
+	for _, seat := range seats {
+		switch seat.Status {
+		case model.SeatAvailable:
+			counts.Available++
+		case model.SeatHeld:
+			counts.Held++
+		case model.SeatConfirmed:
+			counts.Confirmed++
+		}
+	}
+	return model.ShowDetail{Show: show, Counts: counts, Seats: seats}, nil
 }

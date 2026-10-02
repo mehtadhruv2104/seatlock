@@ -2,9 +2,11 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dhruvmehta/seatlock/internal/model"
+	"github.com/jackc/pgx/v5"
 )
 
 // CreateShow inserts the show and all its seats in one transaction, so a show
@@ -43,4 +45,33 @@ func (s *Store) CreateShow(ctx context.Context, name string, labels []string, pr
 		return model.Show{}, err
 	}
 	return show, nil
+}
+
+func (s *Store) GetShow(ctx context.Context, id string) (model.Show, error) {
+	var show model.Show
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, name, price_paise, per_user_limit, created_at
+		FROM shows WHERE id = $1`, id,
+	).Scan(&show.ID, &show.Name, &show.PricePaise, &show.PerUserLimit, &show.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Show{}, ErrNotFound
+	}
+	return show, err
+}
+
+// ListSeats returns every seat of a show in the admin's original order, read
+// in one statement so all seats come from the same snapshot.
+func (s *Store) ListSeats(ctx context.Context, showID string) ([]model.Seat, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT seat_label, status FROM seats
+		WHERE show_id = $1
+		ORDER BY position`, showID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (model.Seat, error) {
+		var seat model.Seat
+		err := row.Scan(&seat.Label, &seat.Status)
+		return seat, err
+	})
 }
