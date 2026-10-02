@@ -75,3 +75,40 @@ func (s *Store) ListSeats(ctx context.Context, showID string) ([]model.Seat, err
 		return seat, err
 	})
 }
+
+// GetShowWithSeats loads the show and whichever of the requested seat labels
+// exist in it, in one round trip. Unlocked read: it's used to reject unknown
+// labels before any transaction starts, which is safe because a show's seats
+// never change after creation. Labels that don't exist are absent from the result.
+func (s *Store) GetShowWithSeats(ctx context.Context, id string, labels []string) (model.Show, []string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sh.id, sh.name, sh.price_paise, sh.per_user_limit, sh.created_at, se.seat_label
+		FROM shows sh
+		LEFT JOIN seats se ON se.show_id = sh.id AND se.seat_label = ANY($2)
+		WHERE sh.id = $1`, id, labels)
+	if err != nil {
+		return model.Show{}, nil, err
+	}
+	defer rows.Close()
+
+	var show model.Show
+	var found []string
+	sawShow := false
+	for rows.Next() {
+		var label *string
+		if err := rows.Scan(&show.ID, &show.Name, &show.PricePaise, &show.PerUserLimit, &show.CreatedAt, &label); err != nil {
+			return model.Show{}, nil, err
+		}
+		sawShow = true
+		if label != nil {
+			found = append(found, *label)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return model.Show{}, nil, err
+	}
+	if !sawShow {
+		return model.Show{}, nil, ErrNotFound
+	}
+	return show, found, nil
+}

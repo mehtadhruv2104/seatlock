@@ -51,12 +51,18 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 	slices.Sort(labels)
 	n := len(labels)
 
-	show, err := s.store.GetShow(ctx, in.ShowID)
+	// Step 0: load the show and check the seats exist, in one unlocked read
+	// before the transaction. A typo gets a 400 even if the user is also at
+	// their limit; validation errors come before domain declines.
+	show, found, err := s.store.GetShowWithSeats(ctx, in.ShowID, labels)
 	if errors.Is(err, db.ErrNotFound) {
 		return ReserveResult{}, ErrShowNotFound
 	}
 	if err != nil {
 		return ReserveResult{}, err
+	}
+	if len(found) < n {
+		return ReserveResult{}, unknownSeats(labels, found)
 	}
 	limit := show.PerUserLimit
 
@@ -110,8 +116,12 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 		if err != nil {
 			return err
 		}
-		if len(locked) < n {
-			return unknownSeats(labels, locked)
+		if len(locked) < n { // can't happen (step 0 checked existence); kept as a backstop
+			lockedLabels := make([]string, len(locked))
+			for i, seat := range locked {
+				lockedLabels[i] = seat.Label
+			}
+			return unknownSeats(labels, lockedLabels)
 		}
 		var unavailable []string
 		seatIDs := make([]string, 0, n)
@@ -203,10 +213,10 @@ func perUserLimitDecline(limit, already, requested int) error {
 	}
 }
 
-func unknownSeats(requested []string, found []db.LockedSeat) error {
+func unknownSeats(requested, found []string) error {
 	exists := make(map[string]bool, len(found))
-	for _, s := range found {
-		exists[s.Label] = true
+	for _, label := range found {
+		exists[label] = true
 	}
 	var unknown []string
 	for _, label := range requested {

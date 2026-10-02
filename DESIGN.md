@@ -368,3 +368,13 @@ Append-only. Format: date, what changed, why, which section it supersedes.
     for storage, comparison and locking), not the request's order.
   - Verified with `EXPLAIN` that the seat-lock query sorts before locking
     (`LockRows` above `Sort`), which the §4 deadlock argument depends on.
+- **2026-10-03 — Seat existence checked before the transaction.** Step 0 now
+  loads the show and the requested seats in one query (`LEFT JOIN` on
+  `seat_label = ANY(...)`), so unknown labels get a 400 before any locks are
+  taken, even if the user is also at their limit. Validation errors come before
+  domain declines. This adds no round trip (it replaces the existing show
+  lookup) and holds no locks. Measured over 1,000 sequential reserves:
+  p50 ~3.3–3.8ms vs ~3.9–4.0ms before, p99 ~5.7–5.9ms vs ~5.5–5.6ms, i.e.
+  unchanged within noise. Safe outside the transaction because a show's seats
+  never change after creation; the in-transaction check remains as a backstop.
+  The same query can later return seat status for the deferred P2 pre-check (§11).
