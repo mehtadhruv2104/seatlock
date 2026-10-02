@@ -10,19 +10,29 @@ import (
 	"time"
 
 	"github.com/dhruvmehta/seatlock/internal/config"
+	"github.com/dhruvmehta/seatlock/internal/db"
 	"github.com/dhruvmehta/seatlock/internal/router"
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	defer pool.Close()
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router.New(),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		log.Printf("listening on :%s", cfg.Port)
