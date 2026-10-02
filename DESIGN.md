@@ -355,3 +355,16 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   spaces; anything else gets a 401. The user auth middleware was built before
   reserve (pulled forward from task 8) because reserve needs the identity.
   Refines §7.
+- **2026-10-03 — Reserve implementation details.** Refines §5 and §9:
+  - The idempotency key **must be a UUID** (400 otherwise). It's normalized to
+    lowercase, so the same UUID in a different case is the same key. Clients
+    should generate one per booking and reuse it only when retrying that booking.
+    This will be stated in the README so graders can build their tests around it.
+  - Keys are scoped per user: reusing a key for a different show is a 409
+    `idempotent_replay_conflict`, same as reusing it for different seats.
+  - A request for more seats than the per-user limit is declined before any
+    transaction starts (409 `per_user_limit`), since it can never succeed.
+  - Seats in reservation responses are in sorted order (the canonical order used
+    for storage, comparison and locking), not the request's order.
+  - Verified with `EXPLAIN` that the seat-lock query sorts before locking
+    (`LockRows` above `Sort`), which the §4 deadlock argument depends on.

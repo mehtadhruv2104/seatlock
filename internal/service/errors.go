@@ -13,3 +13,19 @@ type ValidationError struct {
 }
 
 func (e *ValidationError) Error() string { return e.Message }
+
+// Decline reasons. Also used as the metric label, so treat them as stable API.
+const (
+	ReasonSeatTaken           = "seat_taken"
+	ReasonPerUserLimit        = "per_user_limit"
+	ReasonIdempotencyConflict = "idempotent_replay_conflict"
+)
+
+// DeclineError is a clean domain "no" (HTTP 409), never a server error.
+type DeclineError struct {
+	Reason  string
+	Message string
+	Details map[string]any
+}
+
+func (e *DeclineError) Error() string { return e.Message }

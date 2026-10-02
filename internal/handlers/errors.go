@@ -31,6 +31,10 @@ func writeValidationError(c *gin.Context, ve *service.ValidationError) {
 	writeError(c, http.StatusBadRequest, "validation_error", ve.Message, extra)
 }
 
+func writeDecline(c *gin.Context, de *service.DeclineError) {
+	writeError(c, http.StatusConflict, de.Reason, de.Message, de.Details)
+}
+
 func writeInternalError(c *gin.Context, err error) {
 	log.Printf("internal error on %s %s: %v", c.Request.Method, c.FullPath(), err)
 	writeError(c, http.StatusInternalServerError, "internal_error",
