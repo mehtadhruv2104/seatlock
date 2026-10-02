@@ -1,6 +1,8 @@
 package router
 
 import (
+	"io"
+
 	"github.com/dhruvmehta/seatlock/internal/handlers"
 	"github.com/dhruvmehta/seatlock/internal/middleware"
 	"github.com/gin-gonic/gin"
@@ -8,7 +10,16 @@ import (
 
 func New(h *handlers.Handlers, adminKey string) *gin.Engine {
 	r := gin.New()
-	r.Use(middleware.RequestLog(), gin.Recovery())
+	r.HandleMethodNotAllowed = true
+	// RequestLog is outermost so it also logs requests that panicked (as 500).
+	// The recovery writer is discarded: handlers.Recover logs the panic as JSON.
+	r.Use(
+		middleware.RequestLog(),
+		gin.CustomRecoveryWithWriter(io.Discard, handlers.Recover),
+		middleware.BodyLimit(),
+	)
+	r.NoRoute(handlers.NotFound)
+	r.NoMethod(handlers.MethodNotAllowed)
 
 	r.GET("/healthz", handlers.Healthz)
 

@@ -427,3 +427,9 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   printable ASCII characters), otherwise one is generated; either way it's
   echoed in the response. Migration output and the safeguard/cancel-mismatch
   warnings go through the same logger, so every line is JSON. Refines §10.
+- **2026-10-03 — API edge hardening.** Unknown routes (404 `route_not_found`),
+  wrong methods (405 `method_not_allowed`) and panics (500 `internal_error`,
+  logged with the stack and request id) all use the §9 JSON error format.
+  Request bodies are capped at 8 MiB (413 `payload_too_large`); a 100k-seat show
+  is about 1 MB. Timestamps are returned in UTC: pgx otherwise converts them to
+  the server's local timezone.

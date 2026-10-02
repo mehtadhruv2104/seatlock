@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 
 	"github.com/dhruvmehta/seatlock/internal/logging"
 	"github.com/dhruvmehta/seatlock/internal/middleware"
@@ -52,7 +53,11 @@ func decodeJSON(c *gin.Context, dst any) bool {
 	}
 
 	var typeErr *json.UnmarshalTypeError
+	var tooLarge *http.MaxBytesError
 	switch {
+	case errors.As(err, &tooLarge):
+		writeError(c, http.StatusRequestEntityTooLarge, "payload_too_large",
+			fmt.Sprintf("Request body exceeds the %d MiB limit.", tooLarge.Limit>>20), nil)
 	case errors.Is(err, io.EOF):
 		writeError(c, http.StatusBadRequest, "validation_error", "Request body is required.", nil)
 	case errors.As(err, &typeErr):
@@ -79,4 +84,24 @@ func typeErrorMessage(e *json.UnmarshalTypeError) string {
 		expected = "a list"
 	}
 	return fmt.Sprintf("%s must be %s.", e.Field, expected)
+}
+
+func NotFound(c *gin.Context) {
+	writeError(c, http.StatusNotFound, "route_not_found",
+		fmt.Sprintf("No endpoint at %s %s.", c.Request.Method, c.Request.URL.Path), nil)
+}
+
+func MethodNotAllowed(c *gin.Context) {
+	writeError(c, http.StatusMethodNotAllowed, "method_not_allowed",
+		fmt.Sprintf("%s is not supported on %s.", c.Request.Method, c.Request.URL.Path), nil)
+}
+
+// Recover turns a panic into a JSON 500 and logs it with the stack and the
+// request id, instead of an empty response.
+func Recover(c *gin.Context, recovered any) {
+	logging.FromContext(c.Request.Context()).Error("panic",
+		"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
+	writeError(c, http.StatusInternalServerError, "internal_error",
+		"Something went wrong on our side. Please retry.", nil)
+	c.Abort()
 }
