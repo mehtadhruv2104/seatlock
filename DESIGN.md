@@ -338,3 +338,8 @@ Append-only. Format: date, what changed, why, which section it supersedes.
     with one. Defense in depth alongside the §4 safeguard.
   - Added a partial index `seats (show_id, user_id) WHERE user_id IS NOT NULL`
     to serve the per-user limit count in §4 step 2.
+- **2026-10-03 — Seat `position` column (migration 00002).** Seats store their
+  position in the admin's original list, and `GET /shows/{id}` returns them in
+  that order. Sorting by `seat_label` would give A1, A10, A11, A2, which is
+  confusing. Added as a new migration rather than by editing 00001, because
+  applied migrations are never edited. Extends §8.
