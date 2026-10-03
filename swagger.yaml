@@ -90,6 +90,57 @@ paths:
         - lang: curl
           source: curl -s $BASE/readyz
 
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      description: |
+        Prometheus text format. Labels have small fixed value sets (no per-show
+        or per-user labels); per-show detail comes from `GET /shows/{id}` and the
+        logs.
+
+        - `seatlock_reservations_confirmed_total`, `seatlock_seats_confirmed_total`
+          count 201 responses and the seats they booked.
+        - `seatlock_reservations_declined_total{reason}`: `seat_taken`,
+          `per_user_limit`, `idempotent_replay_conflict` (409s) and
+          `idempotent_replay` (200 retries that booked nothing new).
+        - `seatlock_reservations_cancelled_total`, `seatlock_seats_released_total`.
+        - `seatlock_safeguard_trips_total` must stay 0.
+        - `seatlock_seats_{available,held,confirmed,total}` are read from the
+          database on every scrape across all shows, so they always match it and
+          `available + held + confirmed == total`. `seatlock_seat_gauges_up` is
+          0 if that read failed.
+        - `seatlock_http_requests_total{method,route,status}`,
+          `seatlock_http_request_duration_seconds{method,route}`,
+          `seatlock_db_pool_*`, plus Go runtime and process metrics.
+
+        Counters reset when the process restarts; compare deltas over a burst.
+      operationId: metrics
+      security: []
+      responses:
+        "200":
+          description: Metrics in Prometheus text exposition format
+          content:
+            text/plain:
+              example: |
+                seatlock_reservations_confirmed_total 2
+                seatlock_seats_confirmed_total 3
+                seatlock_reservations_declined_total{reason="seat_taken"} 199
+                seatlock_reservations_declined_total{reason="per_user_limit"} 1
+                seatlock_reservations_declined_total{reason="idempotent_replay"} 3
+                seatlock_reservations_declined_total{reason="idempotent_replay_conflict"} 1
+                seatlock_reservations_cancelled_total 1
+                seatlock_seats_released_total 2
+                seatlock_safeguard_trips_total 0
+                seatlock_seats_available 19
+                seatlock_seats_held 0
+                seatlock_seats_confirmed 1
+                seatlock_seats_total 20
+                seatlock_seat_gauges_up 1
+      x-codeSamples:
+        - lang: curl
+          source: curl -s $BASE/metrics | grep '^seatlock_'
+
   /shows:
     post:
       tags: [Shows]
