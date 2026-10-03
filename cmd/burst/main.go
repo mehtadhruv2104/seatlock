@@ -183,14 +183,31 @@ type job struct {
 	key    string
 	extra  map[string]any // extra body fields (spoofed user_id)
 	result response
+	// first is the first attempt when it got no response or a 5xx and was
+	// retried; result is then the retry's outcome.
+	first   *response
+	retried bool
 }
 
+// reserve sends the request like a careful client: if there's no response or
+// a 5xx, it retries once with the same idempotency key after a short
+// randomized backoff. The same key makes the retry safe: if the first attempt
+// had committed, the retry returns that reservation (200) instead of booking
+// again. A 4xx is a final answer and is never retried.
 func (c *client) reserve(j *job) {
 	body := map[string]any{"seats": j.seats, "idempotency_key": j.key}
 	for k, v := range j.extra {
 		body[k] = v
 	}
-	j.result = c.do("POST", "/shows/"+j.show+"/reserve", map[string]string{"Authorization": "Bearer " + j.user}, body)
+	headers := map[string]string{"Authorization": "Bearer " + j.user}
+	j.result = c.do("POST", "/shows/"+j.show+"/reserve", headers, body)
+	if j.result.err == nil && j.result.status < 500 {
+		return
+	}
+	first := j.result
+	j.first, j.retried = &first, true
+	time.Sleep(time.Duration(200+rand.Intn(400)) * time.Millisecond)
+	j.result = c.do("POST", "/shows/"+j.show+"/reserve", headers, body)
 }
 
 // outcome is how a response is tallied: status plus decline reason.
@@ -447,92 +464,112 @@ func run(cfg config) bool {
 
 	// ---- correctness checks on the stampede
 	fmt.Println("\nCorrectness")
-	serverErrors, netErrors := 0, 0
+	serverErrors, lost, unresolved := 0, 0, 0
+	recovered := map[string]int{}
 	for _, j := range jobs {
-		if j.result.err != nil {
-			netErrors++
-		} else if j.result.status >= 500 {
+		if j.result.err == nil && j.result.status >= 500 || j.first != nil && j.first.err == nil && j.first.status >= 500 {
 			serverErrors++
+		}
+		if j.first != nil && j.first.err != nil {
+			lost++
+			if j.result.err == nil {
+				recovered[outcome(j.result)]++
+			}
+		}
+		if j.result.err != nil {
+			unresolved++
 		}
 	}
 	rep.check("zero 5xx", serverErrors == 0, fmt.Sprintf("%d server errors", serverErrors))
-	rep.check("every request got a response", netErrors == 0, fmt.Sprintf("%d network errors/timeouts", netErrors))
-	if netErrors > 0 {
+	rep.check("every request resolved (directly or by one idempotent retry)", unresolved == 0,
+		fmt.Sprintf("%d still without a response after the retry", unresolved))
+	if lost > 0 {
+		parts := []string{}
+		for k, v := range recovered {
+			parts = append(parts, fmt.Sprintf("%d %s", v, k))
+		}
+		sort.Strings(parts)
+		fmt.Printf("  info  %d responses lost in transit, retried with the same key -> %s\n", lost, strings.Join(parts, ", "))
 		printNetErrors(jobs)
 	}
 
-	owner := map[string]string{} // seat -> reservation_id that confirmed it
-	doubleSold := 0
-	confirmedSeats := 0 // on the main show
-	seatsBooked := 0    // across both shows, for the metrics check
+	// Every booking is identified by its reservation_id, seen either in a 201
+	// or in a 200 replay (when the 201 itself was lost and the retry replayed
+	// it). Counting distinct reservations keeps the checks exact even when
+	// responses were lost.
+	type booking struct {
+		show, user string
+		seats      []string
+	}
+	bookings := map[string]booking{} // reservation_id -> booking
 	for _, j := range jobs {
-		if j.result.status != 201 {
+		if j.result.status == 201 || j.result.status == 200 {
+			bookings[j.result.str("reservation_id")] = booking{j.show, j.result.str("user_id"), j.result.strs("seats")}
+		}
+	}
+	owner := map[string]string{} // seat -> reservation_id
+	doubleSold, confirmedSeats, seatsBooked := 0, 0, 0
+	for id, b := range bookings {
+		seatsBooked += len(b.seats)
+		if b.show != showID {
 			continue
 		}
-		seatsBooked += len(j.result.strs("seats"))
-		if j.show != showID {
-			continue
-		}
-		for _, s := range j.result.strs("seats") {
-			if prev, taken := owner[s]; taken && prev != j.result.str("reservation_id") {
+		for _, seat := range b.seats {
+			if prev, taken := owner[seat]; taken && prev != id {
 				doubleSold++
 			}
-			owner[s] = j.result.str("reservation_id")
+			owner[seat] = id
 			confirmedSeats++
 		}
 	}
-	rep.check("no seat confirmed twice", doubleSold == 0, fmt.Sprintf("%d seats in more than one 201", doubleSold))
+	rep.check("no seat confirmed twice", doubleSold == 0, fmt.Sprintf("%d seats in more than one reservation", doubleSold))
 
-	winners := map[string]int{}
+	hotOwners := map[string]map[string]bool{}
 	hotTries := map[string]int{}
 	for _, j := range jobs {
 		if j.kind != kindHot {
 			continue
 		}
-		hotTries[j.seats[0]]++
-		if j.result.status == 201 {
-			winners[j.seats[0]]++
+		seat := j.seats[0]
+		hotTries[seat]++
+		if hotOwners[seat] == nil {
+			hotOwners[seat] = map[string]bool{}
+		}
+		if j.result.status == 201 || j.result.status == 200 {
+			hotOwners[seat][j.result.str("reservation_id")] = true
 		}
 	}
 	for _, s := range hot {
 		if hotTries[s] == 0 {
 			continue // no hot-seat traffic this run (-hot-share 0)
 		}
-		rep.check(fmt.Sprintf("hot seat %s: exactly one winner", s), winners[s] == 1,
-			fmt.Sprintf("%d of %d requests got 201", winners[s], hotTries[s]))
+		rep.check(fmt.Sprintf("hot seat %s: exactly one winner", s), len(hotOwners[s]) == 1,
+			fmt.Sprintf("%d reservations among %d requests", len(hotOwners[s]), hotTries[s]))
 	}
 
-	// Idempotency: per key at most one 201, and every replay returns that reservation.
-	byKey := map[string][]*job{}
+	// Idempotency: for every key, all 201s and 200 replays carry the same
+	// reservation_id, i.e. one key never books twice.
+	ids := map[string]map[string]bool{}
+	conflicts := 0
 	for _, j := range jobs {
-		if j.kind == kindRetry || j.kind == kindConflict {
-			byKey[j.key] = append(byKey[j.key], j)
+		if j.result.status == 201 || j.result.status == 200 {
+			if ids[j.key] == nil {
+				ids[j.key] = map[string]bool{}
+			}
+			ids[j.key][j.result.str("reservation_id")] = true
+		}
+		if j.result.status == 409 && j.result.str("reason") == "idempotent_replay_conflict" {
+			conflicts++
 		}
 	}
-	keysWithTwo201, badReplays, conflicts := 0, 0, 0
-	for _, group := range byKey {
-		var created string
-		n201 := 0
-		for _, j := range group {
-			if j.result.status == 201 {
-				n201++
-				created = j.result.str("reservation_id")
-			}
-			if j.result.status == 409 && j.result.str("reason") == "idempotent_replay_conflict" {
-				conflicts++
-			}
-		}
-		if n201 > 1 {
-			keysWithTwo201++
-		}
-		for _, j := range group {
-			if j.result.status == 200 && (created == "" || j.result.str("reservation_id") != created) {
-				badReplays++
-			}
+	doubleBooked := 0
+	for _, set := range ids {
+		if len(set) > 1 {
+			doubleBooked++
 		}
 	}
-	rep.check("idempotency: one reservation per key", keysWithTwo201 == 0, fmt.Sprintf("%d keys, %d with >1 booking", len(byKey), keysWithTwo201))
-	rep.check("idempotency: replays return the original", badReplays == 0, fmt.Sprintf("%d mismatched replays", badReplays))
+	rep.check("idempotency: one reservation per key (201s and 200 replays agree)", doubleBooked == 0,
+		fmt.Sprintf("%d keys booked, %d booked more than once", len(ids), doubleBooked))
 	// Whether an in-burst key reuse conflicts depends on ordering (if the
 	// original hadn't committed or lost its seat, the reuse is a fresh attempt),
 	// so it's reported, and the deterministic check is the probe below.
@@ -543,9 +580,9 @@ func run(cfg config) bool {
 	}
 
 	greedySeats := 0
-	for _, j := range jobs {
-		if j.kind == kindGreedy && j.result.status == 201 {
-			greedySeats += len(j.result.strs("seats"))
+	for _, b := range bookings {
+		if b.user == "greedy" {
+			greedySeats += len(b.seats)
 		}
 	}
 	rep.check(fmt.Sprintf("per-user limit: greedy user's 10 parallel requests for free seats got exactly %d", cfg.limit),
@@ -553,7 +590,7 @@ func run(cfg config) bool {
 
 	spoofOK := true
 	for _, j := range jobs {
-		if j.kind == kindSpoof && j.result.status == 201 && j.result.str("user_id") != j.user {
+		if j.kind == kindSpoof && (j.result.status == 201 || j.result.status == 200) && j.result.str("user_id") != j.user {
 			spoofOK = false
 		}
 	}
@@ -572,8 +609,8 @@ func run(cfg config) bool {
 	rep.check("confirmed count never decreased during the burst", drops == 0, fmt.Sprintf("%d drops", drops))
 	rep.check("invariant after the burst: available + held + confirmed == total", final.consistent(),
 		fmt.Sprintf("%d + %d + %d vs %d", final.Available, final.Held, final.Confirmed, final.Total))
-	rep.check("API confirmed count == seats in all 201 responses", final.Confirmed == confirmedSeats,
-		fmt.Sprintf("API %d, responses %d", final.Confirmed, confirmedSeats))
+	rep.check("API confirmed count == seats in all reservations seen", final.Confirmed == confirmedSeats,
+		fmt.Sprintf("API %d, reservations seen %d", final.Confirmed, confirmedSeats))
 
 	// ---- release and re-book
 	rb := rebook(c, rep, cfg, showID, jobs, final)
@@ -582,7 +619,7 @@ func run(cfg config) bool {
 	}
 
 	// ---- metrics reconciliation
-	reconcileMetrics(c, rep, before, tally, seatsBooked+rb.tally["201 confirmed"], rb)
+	reconcileMetrics(c, rep, before, tally, len(bookings)+rb.tally["201 confirmed"], seatsBooked+rb.tally["201 confirmed"], lost, rb)
 
 	fmt.Println()
 	if rep.failed {
@@ -722,7 +759,12 @@ func rebook(c *client, rep *report, cfg config, showID string, jobs []*job, befo
 // reconcileMetrics compares /metrics deltas with what this client observed.
 // Counters are global, so other traffic during the run shows up as a mismatch;
 // that's reported as a warning rather than a failure.
-func reconcileMetrics(c *client, rep *report, before map[string]float64, tally map[string]int, seatsBooked int, rb rebookResult) {
+// When responses were lost, the server counted outcomes the client never saw
+// (a first attempt that committed, then its retry counted as a replay), so
+// decline and replay counters may exceed what the client saw by at most the
+// number of lost attempts. Bookings are counted by distinct reservation, so
+// confirmed counts stay exact.
+func reconcileMetrics(c *client, rep *report, before map[string]float64, tally map[string]int, reservations, seatsBooked, lost int, rb rebookResult) {
 	fmt.Println("\nMetrics reconciliation (/metrics deltas vs this run)")
 	after := c.scrapeMetrics()
 	if before == nil || after == nil {
@@ -735,7 +777,7 @@ func reconcileMetrics(c *client, rep *report, before map[string]float64, tally m
 		metric string
 		want   int
 	}{
-		{"seatlock_reservations_confirmed_total", tally["201 confirmed"]},
+		{"seatlock_reservations_confirmed_total", reservations},
 		{"seatlock_seats_confirmed_total", seatsBooked},
 		{`seatlock_reservations_declined_total{reason="seat_taken"}`, tally["409 seat_taken"]},
 		{`seatlock_reservations_declined_total{reason="per_user_limit"}`, tally["409 per_user_limit"]},
@@ -750,6 +792,8 @@ func reconcileMetrics(c *client, rep *report, before map[string]float64, tally m
 		name := strings.TrimPrefix(p.metric, "seatlock_")
 		if got == p.want {
 			rep.check(name, true, fmt.Sprintf("delta %d", got))
+		} else if lost > 0 && got > p.want && got <= p.want+lost && strings.Contains(p.metric, "declined") {
+			rep.check(name, true, fmt.Sprintf("delta %d, client saw %d; the rest are from %d lost responses", got, p.want, lost))
 		} else if p.metric == "seatlock_safeguard_trips_total" {
 			rep.check(name, false, fmt.Sprintf("delta %d: the reserve safeguard fired", got))
 		} else {
@@ -787,21 +831,25 @@ func printNetErrors(jobs []*job) {
 	}
 	byErr := map[string]*agg{}
 	for _, j := range jobs {
-		if j.result.err == nil {
+		r := j.result
+		if j.first != nil && j.first.err != nil {
+			r = *j.first
+		}
+		if r.err == nil {
 			continue
 		}
-		msg := j.result.err.Error()
+		msg := r.err.Error()
 		if i := strings.LastIndex(msg, "\": "); i >= 0 {
 			msg = msg[i+3:]
 		}
 		a := byErr[msg]
 		if a == nil {
-			a = &agg{min: j.result.latency}
+			a = &agg{min: r.latency}
 			byErr[msg] = a
 		}
 		a.n++
-		a.min = min(a.min, j.result.latency)
-		a.max = max(a.max, j.result.latency)
+		a.min = min(a.min, r.latency)
+		a.max = max(a.max, r.latency)
 	}
 	for msg, a := range byErr {
 		fmt.Printf("        %d x %q after %s-%s\n", a.n, msg, a.min.Round(time.Millisecond), a.max.Round(time.Millisecond))
