@@ -358,6 +358,35 @@ protected by the admin key that mints tokens for given user ids, or a small CLI
 (`go run ./cmd/token alice`). The burst script would mint its users' tokens once
 up front.
 
+### E2. Per-show metrics with bounded cardinality
+
+**Today:** metrics are global (§10 as built, change log 2026-10-03). Counters
+carry only a `reason` label, and seat gauges are summed across all shows.
+Per-show detail comes from `GET /shows/{id}` (exact, from the database) and from
+the access logs (`show_id` field). This keeps `/metrics` at a fixed ~15 series
+forever.
+
+**Gap:** you can't watch or alert on a single show in Prometheus, and if two
+shows are stormed at once their counter deltas mix.
+
+**Design:**
+- Add a `show_id` label to the business counters and export the seat gauges per
+  show, **only for active shows**.
+- "Active" needs a lifecycle we don't model yet: shows should get an on-sale
+  window and an end time. Until then, a proxy: created, booked or cancelled
+  within `ACTIVE_SHOW_WINDOW` (default 24h). A show being stormed stays active
+  because it keeps being touched.
+- Gauges: the scrape-time query gains
+  `WHERE created_at > now() - window OR id = ANY(recently touched)`.
+- Counters: on each scrape, delete the series of shows untouched for longer than
+  the window (`DeletePartialMatch` on the counter vectors). Series count is then
+  bounded by how many shows are on sale at once, not how many ever existed.
+- Trade-off: a deleted series looks like a counter reset to Prometheus. `rate()`
+  handles that, but an all-time total summed across pruned shows drops. Keep
+  unlabeled global counters alongside if all-time totals matter.
+- Never label by `user_id`: unbounded cardinality and personal data in metrics.
+  Per-user detail belongs in logs or traces.
+
 ---
 
 ## Change log
@@ -442,3 +471,22 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   request could see it; it only helps with a pre-shutdown delay under an
   orchestrator that keeps probing during shutdown (e.g. Kubernetes), and Railway
   only uses health checks at deploy time. Refines §10.
+- **2026-10-03 — Metrics are global; per-show metrics documented as E2.**
+  Supersedes the per-show gauge (`seatlock_seats_available{show_id}`) in §10.
+  Labels must have bounded values, and `show_id` grows with every show ever
+  created. So metrics hold aggregates only: counters labelled by `reason`, seat
+  gauges summed over all shows. Per-show detail comes from `GET /shows/{id}` and
+  the access logs, which is the standard split: metrics hold low-cardinality
+  aggregates; logs and the database hold per-entity detail. Other decisions:
+  - Seat gauges are computed from the database on each `/metrics` read (one
+    `count(*) FILTER` query), not refreshed in the background. They can't drift
+    or go stale, and each scrape is one consistent snapshot, so
+    `available + held + confirmed == total` holds in every scrape.
+  - Business counters are incremented in the handler, after the outcome is
+    known and the transaction has committed, so they match the responses
+    clients actually received.
+  - An idempotent replay (200, nothing new booked) counts as
+    `declined{reason="idempotent_replay"}`, matching the spec's wording, and is
+    kept separate from the `idempotent_replay_conflict` 409.
+  - `/metrics` is public: graders need to read it.
+  - Bounded per-show metrics for production are written up as §13 E2.
