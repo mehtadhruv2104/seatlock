@@ -447,6 +447,9 @@ func run(cfg config) bool {
 	}
 	rep.check("zero 5xx", serverErrors == 0, fmt.Sprintf("%d server errors", serverErrors))
 	rep.check("every request got a response", netErrors == 0, fmt.Sprintf("%d network errors/timeouts", netErrors))
+	if netErrors > 0 {
+		printNetErrors(jobs)
+	}
 
 	owner := map[string]string{} // seat -> reservation_id that confirmed it
 	doubleSold := 0
@@ -758,6 +761,37 @@ func printDistribution(title string, tally map[string]int, total int) {
 	sort.Slice(keys, func(i, k int) bool { return tally[keys[i]] > tally[keys[k]] })
 	for _, k := range keys {
 		fmt.Printf("  %-36s %7d  %5.1f%%\n", k, tally[k], 100*float64(tally[k])/float64(total))
+	}
+}
+
+// printNetErrors groups requests that got no response by error text (the
+// request URL stripped out), with how long they took, to tell client-side
+// connection problems from server or proxy behaviour.
+func printNetErrors(jobs []*job) {
+	type agg struct {
+		n        int
+		min, max time.Duration
+	}
+	byErr := map[string]*agg{}
+	for _, j := range jobs {
+		if j.result.err == nil {
+			continue
+		}
+		msg := j.result.err.Error()
+		if i := strings.LastIndex(msg, "\": "); i >= 0 {
+			msg = msg[i+3:]
+		}
+		a := byErr[msg]
+		if a == nil {
+			a = &agg{min: j.result.latency}
+			byErr[msg] = a
+		}
+		a.n++
+		a.min = min(a.min, j.result.latency)
+		a.max = max(a.max, j.result.latency)
+	}
+	for msg, a := range byErr {
+		fmt.Printf("        %d x %q after %s-%s\n", a.n, msg, a.min.Round(time.Millisecond), a.max.Round(time.Millisecond))
 	}
 }
 
