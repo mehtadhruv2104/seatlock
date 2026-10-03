@@ -627,3 +627,15 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   lines are dropped by the platform. `/metrics` counters are unaffected (in
   memory, scraped), which is why metrics, not logs, are the source of truth for
   counts.
+- **2026-10-03 — Sampled hot-seat logs plus per-second summaries.** To stay
+  under Railway's 500 lines/s limit during bursts, the access log writes only 1
+  in 10 reserve `409 seat_taken` lines (configurable: `LOG_SAMPLE_SEAT_TAKEN`,
+  1 = all), marked `"sampled": true, "sample_rate": 10`, deterministically (the
+  1st, 11th, 21st…). Hot-seat losers are ~95% of a burst and their lines are
+  identical. Every other outcome is always logged. Every reserve outcome is
+  counted, and a `reserve summary` line per second (only when there was traffic,
+  plus a final one at shutdown after the server drains) accounts for all of
+  them. Verified locally: over a 20k burst the summaries matched `/metrics`
+  exactly for every outcome. Volume ≈ 0.1 × seat_taken rate + everything else:
+  ~150–450 lines/s at the 1,500–3,000 req/s Railway sustained; above ~3,500
+  req/s, raise the sample rate. Metrics and responses are unaffected.

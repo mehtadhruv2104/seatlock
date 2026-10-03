@@ -9,14 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func New(h *handlers.Handlers, m *metrics.Metrics, adminKey string) *gin.Engine {
+func New(h *handlers.Handlers, m *metrics.Metrics, adminKey string, reserveLog *middleware.ReserveLog) *gin.Engine {
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
 	// Logging and metrics wrap recovery so requests that panicked are still
 	// recorded (as 500). The recovery writer is discarded: handlers.Recover
 	// logs the panic as JSON.
 	r.Use(
-		middleware.RequestLog(),
+		middleware.RequestLog(reserveLog),
 		m.Middleware(),
 		gin.CustomRecoveryWithWriter(io.Discard, handlers.Recover),
 		middleware.BodyLimit(),

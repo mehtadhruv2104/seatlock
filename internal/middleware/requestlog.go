@@ -23,8 +23,9 @@ const (
 
 // RequestLog assigns a request id (reusing a caller-supplied X-Request-Id if
 // it's sane), echoes it in the response, attaches a logger carrying it to the
-// request context, and writes one JSON access-log line per request.
-func RequestLog() gin.HandlerFunc {
+// request context, and writes one JSON access-log line per request, except
+// that reserve seat_taken lines are sampled by reserveLog.
+func RequestLog(reserveLog *ReserveLog) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		id := c.GetHeader(RequestIDHeader)
@@ -39,6 +40,14 @@ func RequestLog() gin.HandlerFunc {
 		c.Next()
 
 		status := c.Writer.Status()
+		sampled := false
+		if c.FullPath() == ReserveRoute {
+			write, s := reserveLog.observe(status, c.GetString(ReasonKey))
+			if !write {
+				return
+			}
+			sampled = s
+		}
 		attrs := []any{
 			"method", c.Request.Method,
 			"route", c.FullPath(),
@@ -53,6 +62,9 @@ func RequestLog() gin.HandlerFunc {
 			if v := c.GetString(key); v != "" {
 				attrs = append(attrs, key, v)
 			}
+		}
+		if sampled {
+			attrs = append(attrs, "sampled", true, "sample_rate", reserveLog.sampleRate)
 		}
 		if status >= 500 {
 			logger.Error("request", attrs...)

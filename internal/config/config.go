@@ -12,6 +12,8 @@ type Config struct {
 	DatabaseURL string
 	AdminKey    string
 	DBMaxConns  int
+	// LogSampleSeatTaken logs 1 in N reserve 409 seat_taken lines (1 = all).
+	LogSampleSeatTaken int
 	// Commit is the deployed git commit: Railway sets RAILWAY_GIT_COMMIT_SHA;
 	// COMMIT_SHA lets other environments provide it.
 	Commit string
@@ -31,13 +33,23 @@ func Load() (Config, error) {
 	if cfg.AdminKey == "" {
 		return Config{}, errors.New("ADMIN_KEY is required")
 	}
-	maxConns := getEnv("DB_MAX_CONNS", "32")
-	n, err := strconv.Atoi(maxConns)
-	if err != nil || n < 1 {
-		return Config{}, fmt.Errorf("DB_MAX_CONNS must be a positive integer, got %q", maxConns)
+	var err error
+	if cfg.DBMaxConns, err = positiveInt("DB_MAX_CONNS", "32"); err != nil {
+		return Config{}, err
 	}
-	cfg.DBMaxConns = n
+	if cfg.LogSampleSeatTaken, err = positiveInt("LOG_SAMPLE_SEAT_TAKEN", "10"); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func positiveInt(key, fallback string) (int, error) {
+	v := getEnv(key, fallback)
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, v)
+	}
+	return n, nil
 }
 
 func getEnv(key, fallback string) string {

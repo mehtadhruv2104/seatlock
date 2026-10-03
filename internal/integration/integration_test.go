@@ -24,6 +24,7 @@ import (
 	"github.com/dhruvmehta/seatlock/internal/db"
 	"github.com/dhruvmehta/seatlock/internal/handlers"
 	"github.com/dhruvmehta/seatlock/internal/metrics"
+	"github.com/dhruvmehta/seatlock/internal/middleware"
 	"github.com/dhruvmehta/seatlock/internal/router"
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
@@ -373,7 +374,7 @@ func TestCancelReserveChurn(t *testing.T) {
 func TestSpoofedUserIDIgnoredOverHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	m := metrics.New(store)
-	srv := httptest.NewServer(router.New(handlers.New(store, shows, reservations, m, "test"), m, "admin"))
+	srv := httptest.NewServer(router.New(handlers.New(store, shows, reservations, m, "test"), m, "admin", middleware.NewReserveLog(1)))
 	defer srv.Close()
 
 	showID := newShow(t, labels("G", 3), 4)

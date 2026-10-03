@@ -15,6 +15,7 @@ import (
 	"github.com/dhruvmehta/seatlock/internal/handlers"
 	"github.com/dhruvmehta/seatlock/internal/logging"
 	"github.com/dhruvmehta/seatlock/internal/metrics"
+	"github.com/dhruvmehta/seatlock/internal/middleware"
 	"github.com/dhruvmehta/seatlock/internal/router"
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
@@ -51,9 +52,19 @@ func main() {
 
 	// Without these, a client can hold a connection and goroutine forever by
 	// trickling headers or a body (slowloris) or by idling (DESIGN.md §11 P4).
+	// Runs until after the server has drained, so the final summary includes
+	// requests that finished during shutdown.
+	reserveLog := middleware.NewReserveLog(cfg.LogSampleSeatTaken)
+	logCtx, stopLog := context.WithCancel(context.Background())
+	logDone := make(chan struct{})
+	go func() {
+		reserveLog.Run(logCtx, time.Second)
+		close(logDone)
+	}()
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           router.New(h, m, cfg.AdminKey),
+		Handler:           router.New(h, m, cfg.AdminKey, reserveLog),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		// Well above the slowest legitimate request (server-side p99 is
@@ -66,7 +77,8 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("listening", "port", cfg.Port, "commit", cfg.Commit, "db_max_conns", cfg.DBMaxConns)
+		slog.Info("listening", "port", cfg.Port, "commit", cfg.Commit, "db_max_conns", cfg.DBMaxConns,
+			"log_sample_seat_taken", cfg.LogSampleSeatTaken)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatal("server error", err)
 		}
@@ -81,6 +93,8 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("forced shutdown", "error", err.Error())
 	}
+	stopLog()
+	<-logDone
 }
 
 func fatal(msg string, err error) {
