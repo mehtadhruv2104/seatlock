@@ -46,11 +46,12 @@ func main() {
 	}
 
 	store := db.NewStore(pool)
-	h := handlers.New(store, service.NewShowService(store), service.NewReservationService(store))
+	m := metrics.New(store)
+	h := handlers.New(store, service.NewShowService(store), service.NewReservationService(store), m)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: router.New(h, metrics.New(store), cfg.AdminKey),
+		Handler: router.New(h, m, cfg.AdminKey),
 	}
 
 	go func() {
