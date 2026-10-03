@@ -1,7 +1,7 @@
 BASE_URL ?= http://localhost:8080
 ARGS ?=
 
-.PHONY: up down test burst
+.PHONY: up down test test-integration burst
 
 # Run the service and Postgres locally (http://localhost:8080).
 up:
@@ -12,6 +12,10 @@ down:
 
 test:
 	go test ./...
+
+# Concurrency tests against a real, throwaway Postgres (needs Docker).
+test-integration:
+	./scripts/test-integration.sh
 
 # On-sale stampede + correctness checks, e.g.
 #   make burst BASE_URL=https://seatlock-production-4dd4.up.railway.app
