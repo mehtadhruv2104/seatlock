@@ -538,3 +538,22 @@ Append-only. Format: date, what changed, why, which section it supersedes.
     Singapore and Postgres in Virginia, a reserve took ~3.1s because row locks
     were held across trans-Pacific round trips. Both now run in Singapore
     (moving Postgres reset the database; only test data was lost).
+- **2026-10-03 — P2 + P4 live results; P5 built; P1 not needed.** Live burst
+  after P2/P4 (same 20k / 500-in-flight run): pool acquires 40,434 → 21,394,
+  acquires that waited 72% → 14%, total connection wait 286s → 92s, server-side
+  reserve p50 ≤50ms → ≤5ms (p99 ≤250ms), client p99 2.94s → 1.65s (the client
+  side is dominated by the network path). Side effect of P2's ordering: a user
+  at their limit who asks for an already-sold seat now gets `seat_taken` from
+  the pre-check instead of `per_user_limit` from the transaction. Both are
+  correct 409s; the reported reason depends on which check runs first.
+  - **P5 (pool size): built.** The pool was pgx's default, max(4, CPUs), which
+    changed from 32 to 48 between two Railway deploys depending on the host. It
+    is now `DB_MAX_CONNS`, default 32: reproducible, and well under Postgres's
+    typical 100-connection limit. Invalid values stop startup.
+  - **P1 (per-wait deadlines + `lock_timeout`): not needed in the current
+    scenario.** Since P2, lock waits are milliseconds (only requests already in
+    flight before a seat sold ever queue on its row lock). Pool waits are
+    bounded by throughput: a 20k all-free-seats burst queues about 3s against
+    the 30s write timeout. A ~2s deadline would turn slow successes into "busy"
+    refusals, which is worse for a correctness-graded burst. Revisit if waits
+    approach the write/proxy timeout, or for database incidents.
