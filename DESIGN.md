@@ -557,3 +557,36 @@ Append-only. Format: date, what changed, why, which section it supersedes.
     the 30s write timeout. A ~2s deadline would turn slow successes into "busy"
     refusals, which is worse for a correctness-graded burst. Revisit if waits
     approach the write/proxy timeout, or for database incidents.
+- **2026-10-03 — 100k-request live bursts (commit 006c426, pool 32, Singapore).**
+  All runs over HTTP/2 from one client machine in India.
+
+  | Run | Result | Client p50 / p99 / max | Server-side reserve p50 / p99 | Pool waits | Lost responses |
+  |---|---|---|---|---|---|
+  | 20k, 1,000 seats, 500 in flight | PASS, 1,552 req/s | 277ms / 1.33s / 2.5s | ≤5ms / ≤100ms | 5% | 0 |
+  | **100k**, 1,000 seats, **500** in flight | **PASS**, 1,693 req/s | 276ms / 652ms / 2.5s | ≤5ms / ≤50ms | 2% | 0 |
+  | 100k, 1,000 seats, **2,000** in flight | 2,959 req/s, correctness held | 489ms / 4.8s / 22.6s | ≤250ms / ≤500ms | 90% | 596 (0.6%) |
+  | 100k, **100k mostly-free seats**, 2,000 in flight | 1,646 req/s, correctness held | 788ms / 4.8s / 22.9s | ≤500ms / ≤2.5s | 99% | 598 (0.6%) |
+
+  Findings:
+  - **Total volume is not the risk; simultaneity is.** 100k requests at 500 in
+    flight passes cleanly; latency ≈ in-flight ÷ throughput (Little's law), so a
+    larger total just takes longer.
+  - **At 2,000 in flight, Railway's edge reset whole client connections** (in
+    batches of ~100 requests, one HTTP/2 connection each, 15–36s into the run).
+    Railway's proxy logs show no 5xx and no upstream errors, and the server
+    answered in ≤0.5s, so the queueing and resets happened between the client and
+    the edge. Rerunning 100k at 500 in flight for 59s produced no resets, which
+    rules out our 15s `ReadTimeout`, run length and per-connection request count.
+  - **Correctness held in every run.** One winner per hot seat, no seat confirmed
+    twice, the invariant held during and after, per-user limit and identity
+    checks passed. The burst tool's "API confirmed vs 201 responses" and "replay
+    matches original" checks failed only because some lost responses were for
+    bookings the server **had committed**. The client never saw those 201s. This
+    is exactly the case idempotency keys exist for: a retry with the same key
+    returns the original reservation instead of booking again.
+  - **The server's real capacity limit** shows in the all-free-seats run: every
+    request needs a full transaction, and with 32 connections the server
+    sustains ~1,600 req/s with p99 ≤2.5s. Memory stayed under 100 MB at every
+    load (the edge limits how many requests reach the app at once).
+  - Still open: an admission-control cap on in-flight reserves (fast 429 instead
+    of queueing) is only useful far beyond these loads; not built.
