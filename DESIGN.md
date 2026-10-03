@@ -616,3 +616,14 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   seats on a limit of 4, and with a read-then-write seat decision (no
   `FOR UPDATE`, no status guard) 28–32 users each got a 201 for the same seat.
   Both broken versions failed every run.
+- **2026-10-03 — Log access; Railway drops logs above 500 lines/s.** Railway has
+  no public log link, so `docs/sample-logs.jsonl` holds a real sample exported
+  with `railway logs --json` after a live burst: startup lines, examples of
+  every route/status/reason, one traced request (`X-Request-Id:
+  demo-trace-0001`), and Railway's own rate-limit warnings. Finding: Railway
+  rate-limits logging to **500 lines per second per replica** and drops the
+  rest. A 2,000-request burst lost 383 of ~2,065 reserve access-log lines
+  ("Messages dropped: 109", "274"). So under a large burst most per-request log
+  lines are dropped by the platform. `/metrics` counters are unaffected (in
+  memory, scraped), which is why metrics, not logs, are the source of truth for
+  counts.
