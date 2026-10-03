@@ -639,3 +639,10 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   exactly for every outcome. Volume ≈ 0.1 × seat_taken rate + everything else:
   ~150–450 lines/s at the 1,500–3,000 req/s Railway sustained; above ~3,500
   req/s, raise the sample rate. Metrics and responses are unaffected.
+- **2026-10-03 — Log sampling verified live (commit 39e6e0f+).** A 20k-request
+  live burst: zero Railway rate-limit warnings (busiest second 359 lines, down
+  from ~2,000 unsampled), 1,923 sampled `seat_taken` lines (1 in 10 of 19,221),
+  and the per-second `reserve summary` lines matched the `/metrics` deltas
+  exactly for every outcome (814 confirmed, 19,221 seat_taken, 98 replays,
+  9 per_user_limit, 48 conflicts). `docs/sample-logs.jsonl` was re-exported from
+  this run. The earlier export, which showed the drops, is in git history.
