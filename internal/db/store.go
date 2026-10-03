@@ -24,3 +24,8 @@ func (s *Store) Ping(ctx context.Context, timeout time.Duration) error {
 	defer cancel()
 	return s.pool.Ping(ctx)
 }
+
+// PoolStat exposes connection-pool statistics for metrics.
+func (s *Store) PoolStat() *pgxpool.Stat {
+	return s.pool.Stat()
+}

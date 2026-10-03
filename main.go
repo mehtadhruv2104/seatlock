@@ -14,6 +14,7 @@ import (
 	"github.com/dhruvmehta/seatlock/internal/db"
 	"github.com/dhruvmehta/seatlock/internal/handlers"
 	"github.com/dhruvmehta/seatlock/internal/logging"
+	"github.com/dhruvmehta/seatlock/internal/metrics"
 	"github.com/dhruvmehta/seatlock/internal/router"
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
@@ -49,7 +50,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: router.New(h, cfg.AdminKey),
+		Handler: router.New(h, metrics.New(store), cfg.AdminKey),
 	}
 
 	go func() {
