@@ -51,19 +51,24 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 	slices.Sort(labels)
 	n := len(labels)
 
-	// Step 0: load the show and check the seats exist, in one unlocked read
-	// before the transaction. A typo gets a 400 even if the user is also at
-	// their limit; validation errors come before domain declines.
-	show, found, err := s.store.GetShowWithSeats(ctx, in.ShowID, labels)
+	// Step 0: one unlocked read before the transaction. A typo gets a 400 even
+	// if the user is also at their limit; validation errors come before
+	// domain declines.
+	pc, err := s.store.GetReservePrecheck(ctx, in.ShowID, labels, in.UserID, in.IdempotencyKey)
 	if errors.Is(err, db.ErrNotFound) {
 		return ReserveResult{}, ErrShowNotFound
 	}
 	if err != nil {
 		return ReserveResult{}, err
 	}
-	if len(found) < n {
+	if len(pc.Seats) < n {
+		found := make([]string, len(pc.Seats))
+		for i, seat := range pc.Seats {
+			found[i] = seat.Label
+		}
 		return ReserveResult{}, unknownSeats(labels, found)
 	}
+	show := pc.Show
 	limit := show.PerUserLimit
 
 	// A request this large can never succeed, whatever the user already holds.
@@ -72,6 +77,25 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 			Reason:  ReasonPerUserLimit,
 			Message: fmt.Sprintf("You can reserve at most %d seats for this show; this request asks for %d.", limit, n),
 			Details: map[string]any{"limit": limit, "requested": n},
+		}
+	}
+
+	// Pre-check (DESIGN.md §11 P2): a fresh request for a seat that is already
+	// sold is declined here, without a transaction, lock or write. This only
+	// ever declines, never grants, so a stale read can't cause a double-sell:
+	// "available" here is re-checked under lock below. It's skipped when the
+	// key is already used, so retries still replay (200) and reused keys still
+	// get idempotent_replay_conflict from the transaction.
+	if !pc.KeyUsed {
+		var taken []string
+		for _, seat := range pc.Seats {
+			if seat.Status != model.SeatAvailable {
+				taken = append(taken, seat.Label)
+			}
+		}
+		if len(taken) > 0 {
+			slices.Sort(taken)
+			return ReserveResult{}, seatTakenDecline(taken)
 		}
 	}
 
@@ -132,12 +156,7 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 			seatIDs = append(seatIDs, seat.ID)
 		}
 		if len(unavailable) > 0 {
-			return &DeclineError{
-				Reason: ReasonSeatTaken,
-				Message: fmt.Sprintf("%s no longer available. No seats were reserved.",
-					seatPhrase(unavailable)),
-				Details: map[string]any{"unavailable_seats": unavailable},
-			}
+			return seatTakenDecline(unavailable)
 		}
 
 		// Step 4: confirm. The UPDATE is state-guarded; with the locks above it
@@ -176,6 +195,14 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 		return ReserveResult{}, err
 	}
 	return result, nil
+}
+
+func seatTakenDecline(unavailable []string) error {
+	return &DeclineError{
+		Reason:  ReasonSeatTaken,
+		Message: fmt.Sprintf("%s no longer available. No seats were reserved.", seatPhrase(unavailable)),
+		Details: map[string]any{"unavailable_seats": unavailable},
+	}
 }
 
 func idempotencyConflict(existing model.Reservation, showID string) error {

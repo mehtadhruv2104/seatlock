@@ -76,41 +76,60 @@ func (s *Store) ListSeats(ctx context.Context, showID string) ([]model.Seat, err
 	})
 }
 
-// GetShowWithSeats loads the show and whichever of the requested seat labels
-// exist in it, in one round trip. Unlocked read: it's used to reject unknown
-// labels before any transaction starts, which is safe because a show's seats
-// never change after creation. Labels that don't exist are absent from the result.
-func (s *Store) GetShowWithSeats(ctx context.Context, id string, labels []string) (model.Show, []string, error) {
+// PrecheckSeat is a requested seat as seen by the unlocked step-0 read.
+type PrecheckSeat struct {
+	Label  string
+	Status model.SeatStatus
+}
+
+// ReservePrecheck is everything reserve reads before its transaction.
+type ReservePrecheck struct {
+	Show  model.Show
+	Seats []PrecheckSeat // requested labels that exist in the show
+	// KeyUsed is true if this user already has a reservation with this
+	// idempotency key: the request is a retry or a reused key.
+	KeyUsed bool
+}
+
+// GetReservePrecheck loads the show, the requested seats with their current
+// status, and whether the idempotency key is already used, in one statement:
+// one round trip, and one snapshot, so the seat statuses and KeyUsed are
+// consistent with each other. Unlocked: callers may use it only to decline
+// (unknown or already-sold seats), never to grant. Seat existence is safe to
+// check here because a show's seats never change after creation.
+func (s *Store) GetReservePrecheck(ctx context.Context, showID string, labels []string, userID, key string) (ReservePrecheck, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT sh.id, sh.name, sh.price_paise, sh.per_user_limit, sh.created_at, se.seat_label
+		SELECT sh.id, sh.name, sh.price_paise, sh.per_user_limit, sh.created_at,
+		       se.seat_label, se.status,
+		       EXISTS (SELECT 1 FROM reservations r WHERE r.user_id = $3 AND r.idempotency_key = $4)
 		FROM shows sh
 		LEFT JOIN seats se ON se.show_id = sh.id AND se.seat_label = ANY($2)
-		WHERE sh.id = $1`, id, labels)
+		WHERE sh.id = $1`, showID, labels, userID, key)
 	if err != nil {
-		return model.Show{}, nil, err
+		return ReservePrecheck{}, err
 	}
 	defer rows.Close()
 
-	var show model.Show
-	var found []string
+	var pc ReservePrecheck
 	sawShow := false
 	for rows.Next() {
-		var label *string
-		if err := rows.Scan(&show.ID, &show.Name, &show.PricePaise, &show.PerUserLimit, &show.CreatedAt, &label); err != nil {
-			return model.Show{}, nil, err
+		var label, status *string
+		if err := rows.Scan(&pc.Show.ID, &pc.Show.Name, &pc.Show.PricePaise, &pc.Show.PerUserLimit,
+			&pc.Show.CreatedAt, &label, &status, &pc.KeyUsed); err != nil {
+			return ReservePrecheck{}, err
 		}
 		sawShow = true
 		if label != nil {
-			found = append(found, *label)
+			pc.Seats = append(pc.Seats, PrecheckSeat{Label: *label, Status: model.SeatStatus(*status)})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return model.Show{}, nil, err
+		return ReservePrecheck{}, err
 	}
 	if !sawShow {
-		return model.Show{}, nil, ErrNotFound
+		return ReservePrecheck{}, ErrNotFound
 	}
-	return show, found, nil
+	return pc, nil
 }
 
 type SeatTotals struct {
