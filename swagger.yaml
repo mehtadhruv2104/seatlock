@@ -49,7 +49,9 @@ paths:
     get:
       tags: [Health]
       summary: Liveness
-      description: The process is up. Never touches the database.
+      description: |
+        The process is up. Never touches the database. Reports the deployed git
+        commit (`unknown` outside Railway unless COMMIT_SHA is set).
       operationId: healthz
       security: []
       responses:
@@ -57,7 +59,7 @@ paths:
           description: Alive
           content:
             application/json:
-              example: { status: ok }
+              example: { status: ok, commit: cb39da8e1f0a9b6d1c2e3f4a5b6c7d8e9f0a1b2c }
       x-codeSamples:
         - lang: curl
           source: curl -s $BASE/healthz

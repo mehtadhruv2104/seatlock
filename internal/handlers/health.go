@@ -12,9 +12,10 @@ const readinessDBTimeout = 2 * time.Second
 
 // Healthz is liveness: the process is up. It deliberately doesn't touch the
 // database, so a database outage marks us not-ready rather than getting a
-// healthy process restarted.
-func Healthz(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+// healthy process restarted. It also reports the deployed commit, so one curl
+// shows exactly what's live.
+func (h *Handlers) Healthz(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "commit": h.commit})
 }
 
 // Readyz is readiness: can we serve traffic right now? Fails closed when the

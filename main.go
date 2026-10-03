@@ -47,7 +47,7 @@ func main() {
 
 	store := db.NewStore(pool)
 	m := metrics.New(store)
-	h := handlers.New(store, service.NewShowService(store), service.NewReservationService(store), m)
+	h := handlers.New(store, service.NewShowService(store), service.NewReservationService(store), m, cfg.Commit)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -55,7 +55,7 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("listening", "port", cfg.Port)
+		slog.Info("listening", "port", cfg.Port, "commit", cfg.Commit)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatal("server error", err)
 		}

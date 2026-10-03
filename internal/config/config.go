@@ -9,6 +9,9 @@ type Config struct {
 	Port        string
 	DatabaseURL string
 	AdminKey    string
+	// Commit is the deployed git commit: Railway sets RAILWAY_GIT_COMMIT_SHA;
+	// COMMIT_SHA lets other environments provide it.
+	Commit string
 }
 
 func Load() (Config, error) {
@@ -16,6 +19,7 @@ func Load() (Config, error) {
 		Port:        getEnv("PORT", "8080"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		AdminKey:    os.Getenv("ADMIN_KEY"),
+		Commit:      getEnv("RAILWAY_GIT_COMMIT_SHA", getEnv("COMMIT_SHA", "unknown")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")

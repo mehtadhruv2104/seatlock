@@ -24,7 +24,7 @@ func New(h *handlers.Handlers, m *metrics.Metrics, adminKey string) *gin.Engine 
 	r.NoRoute(handlers.NotFound)
 	r.NoMethod(handlers.MethodNotAllowed)
 
-	r.GET("/healthz", handlers.Healthz)
+	r.GET("/healthz", h.Healthz)
 	r.GET("/readyz", h.Readyz)
 	r.GET("/metrics", gin.WrapH(m.Handler()))
 
