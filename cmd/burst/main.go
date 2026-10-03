@@ -485,6 +485,9 @@ func run(cfg config) bool {
 		}
 	}
 	for _, s := range hot {
+		if hotTries[s] == 0 {
+			continue // no hot-seat traffic this run (-hot-share 0)
+		}
 		rep.check(fmt.Sprintf("hot seat %s: exactly one winner", s), winners[s] == 1,
 			fmt.Sprintf("%d of %d requests got 201", winners[s], hotTries[s]))
 	}
