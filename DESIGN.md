@@ -674,3 +674,10 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   recorded in `loadTest.md`. Test 1's throughput was half that of an earlier
   identical run (834 vs 1,687 req/s), with the same server-side latency: shared
   infrastructure varies run to run.
+- **2026-10-03 — `seat_taken` log sampling default raised from 1 in 10 to 1 in
+  100.** At 1 in 10, test 2 in `loadTest.md` (~2,900 req/s, 99% `seat_taken`)
+  still lost 6,878 lines to Railway's 500 lines/s limit. At 1 in 100 that
+  traffic produces ~30 sampled lines/s instead of ~290. This doesn't address
+  test 3, where confirmed bookings (always logged) are ~46% of traffic; those
+  would need sampling too, or a dedicated log pipeline. Still configurable via
+  `LOG_SAMPLE_SEAT_TAKEN`.

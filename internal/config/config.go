@@ -37,7 +37,7 @@ func Load() (Config, error) {
 	if cfg.DBMaxConns, err = positiveInt("DB_MAX_CONNS", "32"); err != nil {
 		return Config{}, err
 	}
-	if cfg.LogSampleSeatTaken, err = positiveInt("LOG_SAMPLE_SEAT_TAKEN", "10"); err != nil {
+	if cfg.LogSampleSeatTaken, err = positiveInt("LOG_SAMPLE_SEAT_TAKEN", "100"); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil

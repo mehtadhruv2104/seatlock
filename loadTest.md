@@ -126,16 +126,16 @@ The next levers are a larger pool (Postgres allows ~100 connections), a larger
 Postgres instance, and fewer round trips per transaction.
 
 **6. Logs hit Railway's 500 lines/s limit at these rates; metrics did not.**
-The service writes one line per request, but only 1 in 10 hot-seat declines, plus
-a per-second summary. That's enough up to about 2,000 req/s of mostly-declined
-traffic.
+The service writes one line per request, except that during these tests only 1
+in 10 hot-seat declines were logged, plus a per-second summary. That's enough up
+to about 2,000 req/s of mostly-declined traffic.
 - **Test 2** (~2,900 req/s): Railway dropped 6,878 lines.
 - **Test 3**: 46% of requests are confirmed bookings, which are always logged,
   so Railway dropped 30,001 lines.
 
 Counts stay exact in `/metrics`, which every run reconciled. The fix options:
-- a higher seat-taken sample rate (`LOG_SAMPLE_SEAT_TAKEN=50`), which helps
-  test 2 but not test 3;
+- a higher seat-taken sample rate, which helps test 2 but not test 3.
+  **Done after these tests:** the default is now 1 in 100;
 - sampling successful bookings as well;
 - shipping logs to a dedicated log store instead of the platform's stdout
   pipeline.

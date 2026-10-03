@@ -207,7 +207,7 @@ there are no per-show or per-user labels.
 `X-Request-Id` if you send one, and always returned in that response header),
 `route`, `status`, `latency_ms`, `user_id`, `show_id`, `reservation_id` and the
 decline `reason`.
-- **Sampling:** Railway drops log lines above 500/s per replica, so 1 in 10
+- **Sampling:** Railway drops log lines above 500/s per replica, so 1 in 100
   hot-seat `seat_taken` lines is logged (marked `"sampled": true`).
 - **Summaries:** a `reserve summary` line every second counts every outcome.
   Those counts match `/metrics` exactly.
@@ -231,7 +231,7 @@ decline `reason`.
 | `ADMIN_KEY` | yes | | The app refuses to start without it |
 | `PORT` | no | 8080 | Set by Railway |
 | `DB_MAX_CONNS` | no | 32 | Connection-pool size; fixed rather than CPU-derived |
-| `LOG_SAMPLE_SEAT_TAKEN` | no | 10 | Log 1 in N hot-seat decline lines (1 = all) |
+| `LOG_SAMPLE_SEAT_TAKEN` | no | 100 | Log 1 in N hot-seat decline lines (1 = all) |
 
 ## Layout
 

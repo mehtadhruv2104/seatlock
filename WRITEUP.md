@@ -153,7 +153,7 @@ Every request has a `request_id`, echoed in `X-Request-Id`, so a single request
 can be traced through the logs. Metrics have no per-show or per-user labels
 (unbounded cardinality), and per-show detail comes from `GET /shows/{id}` and
 the logs. Two things I only learned by running it live:
-- Railway drops log lines above 500/s per replica. So 1 in 10 hot-seat decline
+- Railway drops log lines above 500/s per replica. So 1 in 100 hot-seat decline
   lines is logged, and a per-second summary counts every outcome; those counts
   matched `/metrics` exactly.
 - A bug: bodies that arrived too slowly were reported as "invalid JSON". The
@@ -209,7 +209,8 @@ DESIGN.md records who decided what as it happened.
     than built;
   - HTTP/2 by default in the burst tool;
   - not building wait deadlines or a cache, and documenting why;
-  - 1-in-10 log sampling.
+  - hot-seat log sampling (1 in 10 at first, then 1 in 100 after the
+    load tests showed lines were still dropped).
 - I chose the deploy setup and moved both services to the same region.
 
 **Where the AI proposed and I accepted:**
