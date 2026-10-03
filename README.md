@@ -14,6 +14,7 @@ holds under parallel requests, and a retried request never books twice.
 | API reference with curl for every endpoint | [`swagger.yaml`](swagger.yaml) |
 | Design decisions and how they evolved | [`DESIGN.md`](DESIGN.md) |
 | Write-up | [`WRITEUP.md`](WRITEUP.md) |
+| Load test results (20k at once, 100k hot seats, 100k free seats) | [`loadTest.md`](loadTest.md) |
 
 Stack: Go, Gin, PostgreSQL (the only datastore), Docker, Railway.
 

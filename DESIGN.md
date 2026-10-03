@@ -663,3 +663,14 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   timeout, so nothing was dropped and nothing became a 5xx, as predicted when
   P1 (wait deadlines) was not built. Every correctness check passed, metrics
   reconciled exactly, and the server peaked at 127 MB.
+- **2026-10-03 — Published load test results (`loadTest.md`).** Three fresh
+  cloud runs on commit `f1d45a3`, all PASS with zero 5xx and no lost responses:
+  20k all at once (834 req/s), 100k at 2,000 in flight with hot seats
+  (2,912 req/s), 100k with free seats (1,609 req/s, the capacity bound: 99% of
+  pool acquires waited). New finding: Railway still dropped app log lines at
+  these rates (6,878 in test 2, 30,001 in test 3), because 1-in-10 sampling of
+  `seat_taken` isn't enough above ~2,000 req/s, and confirmed bookings, which
+  are always logged, dominate test 3. Metrics remained exact. Options are
+  recorded in `loadTest.md`. Test 1's throughput was half that of an earlier
+  identical run (834 vs 1,687 req/s), with the same server-side latency: shared
+  infrastructure varies run to run.
