@@ -490,3 +490,14 @@ Append-only. Format: date, what changed, why, which section it supersedes.
     kept separate from the `idempotent_replay_conflict` 409.
   - `/metrics` is public: graders need to read it.
   - Bounded per-show metrics for production are written up as §13 E2.
+- **2026-10-03 — Burst tool defaults to HTTP/2.** First live bursts (20k
+  requests, 500 in flight) found every correctness check passing, but with
+  HTTP/1.1 four requests got no response within 30s and the slowest successful
+  one took 13.6s. HTTP/1.1 needs a separate TLS connection per in-flight request,
+  so one laptop opened 500 at once. At 100 in flight: max 679ms, no timeouts.
+  Over HTTP/2 at 500 in flight: ~3x the throughput (1,857 req/s), max 2.4s, no
+  timeouts. The service sees the same concurrency either way, since Railway's
+  edge forwards each request, so the tails came from the client-to-edge
+  connections, not the service. HTTP/2 is now the default so the tool measures
+  the service; `-http1` remains for the one-connection-per-buyer model. A
+  request with no response still counts as a failure.

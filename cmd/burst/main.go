@@ -45,7 +45,7 @@ type config struct {
 	rebookSeats  int
 	pollInterval time.Duration
 	timeout      time.Duration
-	http2        bool
+	http1        bool
 }
 
 func main() {
@@ -63,7 +63,8 @@ func main() {
 	flag.IntVar(&cfg.rebookSeats, "rebook", 20, "reservations to cancel and re-race after the burst")
 	flag.DurationVar(&cfg.pollInterval, "poll", 500*time.Millisecond, "how often to sample show state during the burst")
 	flag.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "per-request timeout")
-	flag.BoolVar(&cfg.http2, "http2", false, "allow HTTP/2 (default HTTP/1.1: one connection per client, like real buyers)")
+	flag.BoolVar(&cfg.http1, "http1", false, "force HTTP/1.1: one connection per in-flight request, like separate buyers. "+
+		"From one machine this mostly measures the client's own connection limits")
 	flag.Parse()
 	if cfg.base == "" && flag.NArg() > 0 {
 		cfg.base = flag.Arg(0)
@@ -97,10 +98,15 @@ func newClient(cfg config) *client {
 		MaxIdleConnsPerHost: cfg.concurrency,
 		IdleConnTimeout:     90 * time.Second,
 	}
-	if !cfg.http2 {
-		// An empty TLSNextProto disables HTTP/2, so concurrent requests use
-		// separate connections instead of multiplexing over one.
+	// HTTPS uses HTTP/2 by default: concurrent requests are multiplexed over a
+	// few connections, so the run measures the service rather than how many
+	// TLS connections one client machine can hold open. The service sees the
+	// same concurrency either way (the edge proxy forwards each request).
+	if cfg.http1 {
+		// An empty TLSNextProto disables HTTP/2.
 		tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	} else {
+		tr.ForceAttemptHTTP2 = true
 	}
 	return &client{cfg: cfg, http: &http.Client{Transport: tr, Timeout: cfg.timeout}}
 }
@@ -350,7 +356,11 @@ func run(cfg config) bool {
 	rep := &report{}
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	fmt.Printf("SeatLock burst against %s\n\n", cfg.base)
+	proto := "HTTP/2 when the server supports it"
+	if cfg.http1 {
+		proto = "HTTP/1.1"
+	}
+	fmt.Printf("SeatLock burst against %s (%s)\n\n", cfg.base, proto)
 	if r := c.do("GET", "/readyz", nil, nil); r.err != nil || r.status != 200 {
 		fmt.Printf("service not ready: status %d, err %v\n", r.status, r.err)
 		return false
