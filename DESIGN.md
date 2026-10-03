@@ -602,3 +602,17 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   **400 `incomplete_body`**; genuinely malformed JSON is still
   `validation_error`. Covered by a test that drives a real `http.Server` over raw
   TCP. Found from the per-request access logs (`reason`, `latency_ms`).
+- **2026-10-03 — Concurrency integration tests (task 11).** Eight tests in
+  `internal/integration` run against a real Postgres with `-race` (row locks
+  and isolation can't be mocked), each on its own show, each ending with a
+  database consistency check: hot-seat storm (500 → exactly 1), overlapping
+  multi-seat (no deadlocks), per-user limit (10 parallel → exactly 4), same-key
+  race (1 created + 19 replays, one row), same key + different seats (conflict),
+  cancel ownership and rebook race, cancel/reserve churn, and a spoofed
+  `user_id` over HTTP. Skipped without `TEST_DATABASE_URL`, so `go test ./...`
+  passes on a fresh clone; `make test-integration` runs them against a
+  throwaway Postgres container. **Verified they catch the bugs they target** by
+  breaking the code on purpose: without the per-user lock the greedy user got 7
+  seats on a limit of 4, and with a read-then-write seat decision (no
+  `FOR UPDATE`, no status guard) 28–32 users each got a 201 for the same seat.
+  Both broken versions failed every run.
