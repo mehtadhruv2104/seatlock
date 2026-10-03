@@ -501,3 +501,40 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   connections, not the service. HTTP/2 is now the default so the tool measures
   the service; `-http1` remains for the one-connection-per-buyer model. A
   request with no response still counts as a failure.
+- **2026-10-03 — First live burst results and §11 decisions.** Live burst (20k
+  requests, 500 in flight, HTTP/2): every correctness and metrics-reconciliation
+  check passed, zero 5xx. Client p50 309ms / p99 2.94s, but **server-side** (from
+  `seatlock_http_request_duration_seconds`) p50 ≤50ms, p99 ≤100ms: the rest is
+  the network path (requests from India enter Railway's Paris edge, `cdg1`).
+  The pool (32 connections) had to wait on 29,091 of 40,434 acquires (72%), and
+  95% of requests were losers. Decisions:
+  - **P2 (pre-check): build.** Its trigger fired: pool waits dominated by
+    requests that lose. A loser currently runs a full transaction (claim write,
+    user lock, count, seat lock, possibly a lock-queue wait, rollback) while
+    holding a connection. Step 0 already reads the seats, so it also returns
+    their status, and a fresh request for an already-sold seat gets a 409 with
+    no transaction, lock or write. It can only decline, never grant; the
+    transaction stays the authority. The same query also checks whether this
+    user's idempotency key already exists. If it does, the pre-check is skipped,
+    so retries still replay (200) and reused keys still get
+    `idempotent_replay_conflict`.
+  - **P4 (HTTP server timeouts): build.** With no timeouts, slow or idle clients
+    can hold connections indefinitely.
+  - **P3 (sold-seat cache, in memory or Redis): not built.** Trade-off: a cache
+    could only save the single indexed read that losers still do after P2. That
+    read is not the bottleneck: pool pressure comes from transactions and lock
+    queues, which P2 removes, and server-side p99 is already ≤100ms. Against that
+    small gain, a cache adds:
+    - invalidation: a cancel turns "sold" back into "available", and a stale
+      entry wrongly declines buyers for a released seat;
+    - it may only ever decline, never grant, so it can't remove the transaction;
+    - with several instances, in-memory caches diverge; Redis fixes that but
+      brings a second dependency, another network hop and new failure modes.
+    Revisit when measurements show the database saturated by reads, when running
+    more than one app instance, or at an order of magnitude more load.
+  - **P1 (wait deadlines) and P5 (pool size): decide after rerunning with P2**,
+    since P2 changes the pool picture. Neither trigger has fired.
+  - **Region:** app and Postgres must be in the same region. With the app in
+    Singapore and Postgres in Virginia, a reserve took ~3.1s because row locks
+    were held across trans-Pacific round trips. Both now run in Singapore
+    (moving Postgres reset the database; only test data was lost).
