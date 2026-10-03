@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/dhruvmehta/seatlock/internal/metrics"
 	"github.com/dhruvmehta/seatlock/internal/middleware"
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
@@ -40,18 +41,25 @@ func (h *Handlers) Reserve(c *gin.Context) {
 		return
 	}
 
+	c.Set(middleware.ShowIDKey, showID)
 	result, err := h.reservations.Reserve(c.Request.Context(), service.ReserveInput{
 		ShowID:         showID,
 		UserID:         middleware.UserID(c),
 		IdempotencyKey: key,
 		Seats:          req.Seats,
 	})
+	// Business metrics are counted here, once the outcome is final, so they
+	// match the responses clients actually received.
 	var ve *service.ValidationError
 	var de *service.DeclineError
 	switch {
 	case errors.As(err, &ve):
 		writeValidationError(c, ve)
 	case errors.As(err, &de):
+		h.metrics.Declined(de.Reason)
+		if de.SafeguardTripped {
+			h.metrics.SafeguardTripped()
+		}
 		writeDecline(c, de)
 	case errors.Is(err, service.ErrShowNotFound):
 		writeError(c, http.StatusNotFound, "show_not_found", "No show exists with this id.",
@@ -59,8 +67,12 @@ func (h *Handlers) Reserve(c *gin.Context) {
 	case err != nil:
 		writeInternalError(c, err)
 	case result.Replayed:
+		h.metrics.Declined(metrics.ReasonIdempotentReplay)
+		c.Set(middleware.ReservationIDKey, result.Reservation.ID)
 		c.JSON(http.StatusOK, result.Reservation)
 	default:
+		h.metrics.ReservationConfirmed(len(result.Reservation.Seats))
+		c.Set(middleware.ReservationIDKey, result.Reservation.ID)
 		c.JSON(http.StatusCreated, result.Reservation)
 	}
 }
@@ -106,6 +118,7 @@ func (h *Handlers) Cancel(c *gin.Context) {
 		return
 	}
 
+	c.Set(middleware.ReservationIDKey, id)
 	result, err := h.reservations.Cancel(c.Request.Context(), middleware.UserID(c), id)
 	switch {
 	case errors.Is(err, service.ErrReservationNotFound):
@@ -114,6 +127,10 @@ func (h *Handlers) Cancel(c *gin.Context) {
 	case err != nil:
 		writeInternalError(c, err)
 	default:
+		if !result.AlreadyCancelled {
+			h.metrics.ReservationCancelled(len(result.Reservation.Seats))
+		}
+		c.Set(middleware.ShowIDKey, result.Reservation.ShowID)
 		c.JSON(http.StatusOK, result.Reservation)
 	}
 }

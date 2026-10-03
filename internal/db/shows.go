@@ -112,3 +112,21 @@ func (s *Store) GetShowWithSeats(ctx context.Context, id string, labels []string
 	}
 	return show, found, nil
 }
+
+type SeatTotals struct {
+	Available, Held, Confirmed, Total int
+}
+
+// SeatTotals counts seats by status across all shows in one statement, so the
+// four numbers come from one snapshot and always satisfy
+// available + held + confirmed == total.
+func (s *Store) SeatTotals(ctx context.Context) (SeatTotals, error) {
+	var t SeatTotals
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE status = 'available'),
+		       count(*) FILTER (WHERE status = 'held'),
+		       count(*) FILTER (WHERE status = 'confirmed'),
+		       count(*)
+		FROM seats`).Scan(&t.Available, &t.Held, &t.Confirmed, &t.Total)
+	return t, err
+}

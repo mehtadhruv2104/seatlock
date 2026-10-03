@@ -15,6 +15,10 @@ const (
 	// ReasonKey is set by handlers on error responses so the access log
 	// records why a request was declined.
 	ReasonKey = "reason"
+	// ShowIDKey and ReservationIDKey are set by handlers so per-show and
+	// per-reservation detail lives in the logs (metrics stay aggregate-only).
+	ShowIDKey        = "show_id"
+	ReservationIDKey = "reservation_id"
 )
 
 // RequestLog assigns a request id (reusing a caller-supplied X-Request-Id if
@@ -45,8 +49,10 @@ func RequestLog() gin.HandlerFunc {
 		if user := UserID(c); user != "" {
 			attrs = append(attrs, "user_id", user)
 		}
-		if reason := c.GetString(ReasonKey); reason != "" {
-			attrs = append(attrs, "reason", reason)
+		for _, key := range []string{ShowIDKey, ReservationIDKey, ReasonKey} {
+			if v := c.GetString(key); v != "" {
+				attrs = append(attrs, key, v)
+			}
 		}
 		if status >= 500 {
 			logger.Error("request", attrs...)

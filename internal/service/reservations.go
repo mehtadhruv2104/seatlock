@@ -151,9 +151,10 @@ func (s *ReservationService) Reserve(ctx context.Context, in ReserveInput) (Rese
 			logging.FromContext(ctx).Error("safeguard tripped: locked seats were not all confirmed",
 				"show_id", show.ID, "user_id", in.UserID, "seats", labels, "confirmed", affected, "expected", n)
 			return &DeclineError{
-				Reason:  ReasonSeatTaken,
-				Message: "Some of these seats are no longer available. No seats were reserved.",
-				Details: map[string]any{"unavailable_seats": labels},
+				Reason:           ReasonSeatTaken,
+				Message:          "Some of these seats are no longer available. No seats were reserved.",
+				Details:          map[string]any{"unavailable_seats": labels},
+				SafeguardTripped: true,
 			}
 		}
 

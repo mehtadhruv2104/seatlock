@@ -29,6 +29,8 @@ type DeclineError struct {
 	Reason  string
 	Message string
 	Details map[string]any
+	// SafeguardTripped marks the §4 safeguard firing: a locking bug, not a lost race.
+	SafeguardTripped bool
 }
 
 func (e *DeclineError) Error() string { return e.Message }

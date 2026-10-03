@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/dhruvmehta/seatlock/internal/middleware"
 	"github.com/dhruvmehta/seatlock/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -50,6 +51,7 @@ func (h *Handlers) CreateShow(c *gin.Context) {
 	case err != nil:
 		writeInternalError(c, err)
 	default:
+		c.Set(middleware.ShowIDKey, detail.ID)
 		c.JSON(http.StatusCreated, detail)
 	}
 }
@@ -62,6 +64,7 @@ func (h *Handlers) GetShow(c *gin.Context) {
 		return
 	}
 
+	c.Set(middleware.ShowIDKey, id)
 	detail, err := h.shows.GetShow(c.Request.Context(), id)
 	switch {
 	case errors.Is(err, service.ErrShowNotFound):

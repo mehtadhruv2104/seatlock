@@ -22,6 +22,7 @@ type Metrics struct {
 	reg          *prometheus.Registry
 	httpRequests *prometheus.CounterVec
 	httpDuration *prometheus.HistogramVec
+	biz          business
 }
 
 func New(store *db.Store) *Metrics {
@@ -36,7 +37,10 @@ func New(store *db.Store) *Metrics {
 			Help:    "HTTP request latency by method and route template.",
 			Buckets: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 		}, []string{"method", "route"}),
+		biz: newBusiness(),
 	}
+	m.reg.MustRegister(m.biz.collectors()...)
+	m.reg.MustRegister(newSeatCollector(store))
 	m.reg.MustRegister(
 		m.httpRequests,
 		m.httpDuration,
