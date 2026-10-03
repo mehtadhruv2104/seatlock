@@ -575,6 +575,8 @@ components:
           description: Stable machine-readable code (also the metric label for declines)
           enum:
             - validation_error
+            - incomplete_body
+            - request_timeout
             - unauthorized
             - show_not_found
             - reservation_not_found

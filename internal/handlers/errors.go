@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"reflect"
 	"runtime/debug"
@@ -44,8 +45,11 @@ func writeInternalError(c *gin.Context, err error) {
 		"Something went wrong on our side. Please retry.", nil)
 }
 
-// decodeJSON reads the request body into dst and, on failure, writes a 400
+// decodeJSON reads the request body into dst and, on failure, writes a 4xx
 // that names the problem. Returns false if the request was already answered.
+// A body that never fully arrived (read timeout, connection cut mid-body) is
+// reported as such, not as malformed JSON: blaming the client's JSON would
+// hide a network or timeout problem behind a "client bug" label.
 func decodeJSON(c *gin.Context, dst any) bool {
 	err := json.NewDecoder(c.Request.Body).Decode(dst)
 	if err == nil {
@@ -54,10 +58,17 @@ func decodeJSON(c *gin.Context, dst any) bool {
 
 	var typeErr *json.UnmarshalTypeError
 	var tooLarge *http.MaxBytesError
+	var netErr net.Error
 	switch {
 	case errors.As(err, &tooLarge):
 		writeError(c, http.StatusRequestEntityTooLarge, "payload_too_large",
 			fmt.Sprintf("Request body exceeds the %d MiB limit.", tooLarge.Limit>>20), nil)
+	case errors.As(err, &netErr) && netErr.Timeout():
+		writeError(c, http.StatusRequestTimeout, "request_timeout",
+			"Timed out waiting for the request body. Retry the request (with the same idempotency key).", nil)
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		writeError(c, http.StatusBadRequest, "incomplete_body",
+			"The request body ended before the JSON was complete. Send the full body.", nil)
 	case errors.Is(err, io.EOF):
 		writeError(c, http.StatusBadRequest, "validation_error", "Request body is required.", nil)
 	case errors.As(err, &typeErr):

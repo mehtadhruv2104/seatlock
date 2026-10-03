@@ -590,3 +590,15 @@ Append-only. Format: date, what changed, why, which section it supersedes.
     load (the edge limits how many requests reach the app at once).
   - Still open: an admission-control cap on in-flight reserves (fast 429 instead
     of queueing) is only useful far beyond these loads; not built.
+- **2026-10-03 — Bug found under load: slow or cut-off bodies were reported as
+  "invalid JSON".** In a 20k-requests-at-once run from one laptop (client-bound:
+  it ran out of local ports), the server logged a handful of
+  `400 validation_error` responses, most with `latency_ms` ≈ 15000, exactly the
+  P4 `ReadTimeout`. The edge had forwarded the headers but the body arrived late
+  or never, the read timed out, and `decodeJSON` treated any decode failure as
+  "Request body is not valid JSON", blaming the client for a transport problem.
+  Fixed: a read timeout → **408 `request_timeout`**; a body that ends early
+  (truncated, or JSON that is itself incomplete, which look the same) →
+  **400 `incomplete_body`**; genuinely malformed JSON is still
+  `validation_error`. Covered by a test that drives a real `http.Server` over raw
+  TCP. Found from the per-request access logs (`reason`, `latency_ms`).
