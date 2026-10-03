@@ -35,7 +35,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	pool, err := db.Connect(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 	if err != nil {
 		fatal("database unreachable", err)
 	}
@@ -66,7 +66,7 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("listening", "port", cfg.Port, "commit", cfg.Commit)
+		slog.Info("listening", "port", cfg.Port, "commit", cfg.Commit, "db_max_conns", cfg.DBMaxConns)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatal("server error", err)
 		}

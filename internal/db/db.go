@@ -10,11 +10,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+func Connect(ctx context.Context, databaseURL string, maxConns int) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+	// pgx's default pool size depends on the host's CPU count.
+	cfg.MaxConns = int32(maxConns)
 	// pgx returns timestamptz in the process's local zone by default; return
 	// UTC so API timestamps don't depend on where the server runs.
 	cfg.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {

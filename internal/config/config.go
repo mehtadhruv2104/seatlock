@@ -2,13 +2,16 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"strconv"
 )
 
 type Config struct {
 	Port        string
 	DatabaseURL string
 	AdminKey    string
+	DBMaxConns  int
 	// Commit is the deployed git commit: Railway sets RAILWAY_GIT_COMMIT_SHA;
 	// COMMIT_SHA lets other environments provide it.
 	Commit string
@@ -28,6 +31,12 @@ func Load() (Config, error) {
 	if cfg.AdminKey == "" {
 		return Config{}, errors.New("ADMIN_KEY is required")
 	}
+	maxConns := getEnv("DB_MAX_CONNS", "32")
+	n, err := strconv.Atoi(maxConns)
+	if err != nil || n < 1 {
+		return Config{}, fmt.Errorf("DB_MAX_CONNS must be a positive integer, got %q", maxConns)
+	}
+	cfg.DBMaxConns = n
 	return cfg, nil
 }
 
