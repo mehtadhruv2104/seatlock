@@ -1,6 +1,6 @@
 # SeatLock
 
-A seat-reservation service built to stay correct when thousands of buyers hit
+A seat-reservation service built to stay consistent and available when thousands of buyers hit
 "book" in the same second: a seat is never sold twice, the per-user limit
 holds under parallel requests, and a retried request never books twice.
 
@@ -45,7 +45,7 @@ curl -s $BASE/shows/$SHOW_ID
 curl -s -X POST $BASE/reservations/$RESERVATION_ID/cancel -H 'Authorization: Bearer alice'
 ```
 
-### What graders need to know
+### What Users need to know
 
 - **User auth:** `Authorization: Bearer <user_token>`. To make testing easy, the
   token *is* the user id: any 1–128 character string with no spaces is a
