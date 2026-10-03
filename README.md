@@ -147,6 +147,14 @@ DESIGN.md.
 
 ---
 
+**From the cloud:** one laptop can't open thousands of simultaneous requests,
+so [`Dockerfile.burst`](Dockerfile.burst) runs the tool as a one-off job (for
+example a Railway service with restart policy "never", ideally in the same
+region). Configure it with `BASE_URL`, `ADMIN_KEY` and
+`BURST_ARGS="-requests 20000 -concurrency 20000"`; the result is in the job's
+logs. Run that way, **20,000 reservations all at once passed every check**, with
+zero 5xx and no lost responses (see DESIGN.md).
+
 ## Run locally
 
 ```sh

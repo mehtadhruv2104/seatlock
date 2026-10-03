@@ -646,3 +646,20 @@ Append-only. Format: date, what changed, why, which section it supersedes.
   exactly for every outcome (814 confirmed, 19,221 seat_taken, 98 replays,
   9 per_user_limit, 48 conflicts). `docs/sample-logs.jsonl` was re-exported from
   this run. The earlier export, which showed the drops, is in git history.
+- **2026-10-03 — Grader-literal burst from the cloud: PASS.** The laptop
+  couldn't generate 20k simultaneous requests (it ran out of local ports), so
+  the burst ran as a one-off job (`Dockerfile.burst`) in a temporary Railway
+  service in the same region, going through the public URL and edge like any
+  client.
+
+  | Run (from the cloud) | Result | Client p50 / p99 / max | Server-side reserve p99 | Pool waits |
+  |---|---|---|---|---|
+  | 20k, 500 in flight | PASS, 4,460 req/s | 92ms / 1.1s / 1.6s | n/a | n/a |
+  | **20k all at once** (20,000 in flight) | **PASS**, 1,687 req/s, 0 lost, 0 5xx | 4.9s / 11.5s / 11.6s | ≤250ms (36 over 1s) | 73% |
+
+  At 20k simultaneous, client latency is queueing in front of the handlers:
+  20,000 ÷ ~1,700 req/s ≈ 12s for the last request (Little's law), while each
+  request took ≤250ms once it reached the server. That stays under the 30s write
+  timeout, so nothing was dropped and nothing became a 5xx, as predicted when
+  P1 (wait deadlines) was not built. Every correctness check passed, metrics
+  reconciled exactly, and the server peaked at 127 MB.

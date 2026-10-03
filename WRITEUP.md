@@ -165,6 +165,12 @@ the logs. Two things I only learned by running it live:
   every check with zero 5xx; server-side p99 ≤100ms and ≤50ms respectively.
 - At 2,000 in flight, Railway's edge reset some client connections (0.6% of
   responses lost), while the server answered in ≤0.5s and correctness held.
+- **The spec's scenario, 20,000 reservations all at once**, run from a
+  datacenter client in the same region (a one-off Railway job built from
+  `Dockerfile.burst`), **passed every check**: zero 5xx, no lost responses, one
+  winner per hot seat, and metrics reconciled exactly. Clients waited up to
+  ~12s in the queue (20k ÷ ~1,700 req/s), while each request took ≤250ms on the
+  server.
 - The most expensive case, 100k requests for mostly free seats, ran at about
   1,600 req/s with a server-side p99 ≤2.5s.
 
