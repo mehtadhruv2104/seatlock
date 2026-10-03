@@ -1,0 +1,18 @@
+# Runs the burst tool once, as a job, so a load test can come from datacenter
+# networking instead of one laptop's connections:
+#   BASE_URL    target, e.g. https://seatlock-production-4dd4.up.railway.app
+#   ADMIN_KEY   admin key for creating the test show
+#   BURST_ARGS  extra flags, e.g. "-requests 20000 -concurrency 20000"
+# Exits non-zero if any check fails.
+FROM golang:1.24.13-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/burst ./cmd/burst
+
+# Alpine, not distroless: a shell is needed to expand BURST_ARGS and raise the
+# open-file limit for thousands of concurrent connections.
+FROM alpine:3.20
+COPY --from=build /out/burst /burst
+ENTRYPOINT ["sh", "-c", "ulimit -n 65536 2>/dev/null; echo \"open-file limit: $(ulimit -n)\"; exec /burst -base \"$BASE_URL\" $BURST_ARGS"]
