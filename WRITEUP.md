@@ -207,9 +207,7 @@ DESIGN.md records who decided what as it happened.
 - I chose the deploy setup and moved both services to the same region.
 
 **Where the AI proposed and I accepted:**
-- Dropping Redis and the frontend from my initial stack.
-- The lock order (key claim → per-user lock → sorted seats) and the
-  state-guarded safeguard.
+
 - Replacing a stored per-user counter with a lock-only row. This was its own
   self-correction, after it noticed a stored count would drift once holds
   could expire.
@@ -219,17 +217,18 @@ DESIGN.md records who decided what as it happened.
 **What the AI found and fixed while operating it:**
 - The live service was pinned to an old commit.
 - The app and database were in different regions.
-- Railway's log rate limit.
+- Railway's log rate limit. (This was a crucial change)
 - The misclassified read-timeout errors.
-- Flawed checks in its own burst tool: a vacuous greedy-user check and an
-  order-dependent conflict check.
+
 
 **Where the AI was wrong:**
-- It started coding before I asked.
+
 - It recommended `railway.json`, then found it deprecated and reversed itself.
 - It made a commit that didn't compile on its own, fixed in the next commit.
 - It first blamed the hot-seat storm for latency, which turned out to be the
   network path.
+- Flawed checks in its own burst tool: a vacuous greedy-user check and an
+  order-dependent conflict check.
 
 ## 7. What I'd do next
 
