@@ -49,9 +49,20 @@ func main() {
 	m := metrics.New(store)
 	h := handlers.New(store, service.NewShowService(store), service.NewReservationService(store), m, cfg.Commit)
 
+	// Without these, a client can hold a connection and goroutine forever by
+	// trickling headers or a body (slowloris) or by idling (DESIGN.md §11 P4).
 	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router.New(h, m, cfg.AdminKey),
+		Addr:              ":" + cfg.Port,
+		Handler:           router.New(h, m, cfg.AdminKey),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		// Well above the slowest legitimate request (server-side p99 is
+		// ≤100ms under burst): when it fires the client sees a dropped
+		// connection, which the edge reports as a 5xx.
+		WriteTimeout: 30 * time.Second,
+		// Longer than typical proxy idle timeouts, so the edge doesn't reuse a
+		// connection at the moment we close it (that race surfaces as a 502).
+		IdleTimeout: 120 * time.Second,
 	}
 
 	go func() {
