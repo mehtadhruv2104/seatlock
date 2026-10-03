@@ -1,0 +1,32 @@
+# Local run that matches the deploy: same image, Postgres alongside.
+#   docker compose up --build
+# API on http://localhost:8080 (override with HOST_PORT=...).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: seatlock
+      POSTGRES_PASSWORD: seatlock
+      POSTGRES_DB: seatlock
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seatlock -d seatlock"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  app:
+    build: .
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgres://seatlock:seatlock@postgres:5432/seatlock?sslmode=disable
+      ADMIN_KEY: ${ADMIN_KEY:-dev-admin-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
