@@ -1,0 +1,542 @@
+openapi: 3.0.3
+info:
+  title: SeatLock API
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  description: |
+    Assigned-seat reservations that stay correct under on-sale stampedes:
+    no seat is ever sold twice, the per-user limit holds under concurrency,
+    and retries with the same idempotency key never book twice.
+
+    **Auth**
+    - Users: `Authorization: Bearer <user_token>`. For testing, the token *is*
+      the user id: any string of 1–128 characters with no spaces is a distinct
+      user. Identity is never read from the request body.
+    - Admin (`POST /shows`): `X-Admin-Key: <key>`. The key for the live deploy is
+      `admin`.
+
+    **Idempotency keys** must be UUIDs. Generate one per booking and reuse it
+    only to retry that same booking.
+
+    **Errors** share one shape: a machine-readable `reason`, a human `message`,
+    and context fields that say what to do next (see the `Error` schema).
+
+    **Request ids**: every response carries `X-Request-Id`. Send your own to
+    correlate with the server logs; otherwise one is generated.
+
+    In the `curl` examples, set:
+    ```
+    BASE=https://seatlock-production-4dd4.up.railway.app   # or http://localhost:8080
+    ```
+servers:
+  - url: https://seatlock-production-4dd4.up.railway.app
+    description: Live (Railway)
+  - url: http://localhost:8080
+    description: Local (docker compose up --build)
+
+tags:
+  - name: Health
+    description: Liveness and readiness probes (no auth)
+  - name: Shows
+    description: Create shows (admin) and read seat state (public)
+  - name: Reservations
+    description: Reserve and cancel seats (user token)
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness
+      description: The process is up. Never touches the database.
+      operationId: healthz
+      security: []
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              example: { status: ok }
+      x-codeSamples:
+        - lang: curl
+          source: curl -s $BASE/healthz
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness
+      description: |
+        Pings the database with a 2s timeout. Fails closed (503) if the database
+        doesn't answer.
+      operationId: readyz
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              example: { status: ready, checks: { database: ok } }
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                reason: database_unreachable
+                message: The database is not reachable.
+                status: not_ready
+      x-codeSamples:
+        - lang: curl
+          source: curl -s $BASE/readyz
+
+  /shows:
+    post:
+      tags: [Shows]
+      summary: Create a show (admin)
+      description: |
+        Creates the show and all its seats in one transaction. Every seat starts
+        `available`. Seats are returned in the order given.
+      operationId: createShow
+      security: [{ adminKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateShowRequest" }
+            example:
+              name: friday-night
+              seats: [A1, A2, A3, A12, A13]
+              price_paise: 25000
+              per_user_limit: 4
+      responses:
+        "201":
+          description: Show created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShowDetail" }
+              example:
+                id: 0ccfe01f-1690-44f0-93e1-401db334b6ba
+                name: friday-night
+                price_paise: 25000
+                per_user_limit: 4
+                created_at: "2026-10-03T07:13:45.738932Z"
+                counts: { available: 5, held: 0, confirmed: 0, total: 5 }
+                seats:
+                  - { label: A1, status: available }
+                  - { label: A2, status: available }
+                  - { label: A3, status: available }
+                  - { label: A12, status: available }
+                  - { label: A13, status: available }
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                duplicateSeats:
+                  value:
+                    reason: validation_error
+                    message: Each seat label must be unique within a show.
+                    field: seats
+                    duplicate_seats: [A1]
+                invalidSeats:
+                  value:
+                    reason: validation_error
+                    message: Seat labels must be 1-32 characters with no leading or trailing spaces.
+                    field: seats
+                    invalid_seats: [" A2", ""]
+                decimalPrice:
+                  value:
+                    reason: validation_error
+                    message: price_paise must be a whole number of paise (e.g. 25000 for ₹250). Decimals and strings are not accepted.
+                    field: price_paise
+        "401": { $ref: "#/components/responses/AdminUnauthorized" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl -s -X POST $BASE/shows \
+              -H 'X-Admin-Key: admin' \
+              -H 'Content-Type: application/json' \
+              -d '{"name":"friday-night","seats":["A1","A2","A3","A12","A13"],"price_paise":25000,"per_user_limit":4}'
+
+  /shows/{id}:
+    get:
+      tags: [Shows]
+      summary: Show state
+      description: |
+        Per-seat status plus counts. `available + held + confirmed == total`
+        always holds: counts are computed from the same rows that are returned.
+        Who holds a seat is not exposed.
+      operationId: getShow
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShowId"
+      responses:
+        "200":
+          description: Show with seats and counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShowDetail" }
+              example:
+                id: 0ccfe01f-1690-44f0-93e1-401db334b6ba
+                name: friday-night
+                price_paise: 25000
+                per_user_limit: 4
+                created_at: "2026-10-03T07:13:45.738932Z"
+                counts: { available: 3, held: 0, confirmed: 2, total: 5 }
+                seats:
+                  - { label: A1, status: available }
+                  - { label: A2, status: available }
+                  - { label: A3, status: available }
+                  - { label: A12, status: confirmed }
+                  - { label: A13, status: confirmed }
+        "400": { $ref: "#/components/responses/InvalidShowId" }
+        "404": { $ref: "#/components/responses/ShowNotFound" }
+      x-codeSamples:
+        - lang: curl
+          source: curl -s $BASE/shows/$SHOW_ID
+
+  /shows/{id}/reserve:
+    post:
+      tags: [Reservations]
+      summary: Reserve seats
+      description: |
+        Atomically confirms **all** requested seats or **none** (all-or-nothing).
+
+        - New reservation → `201`.
+        - Same idempotency key with the same seats (any order) → `200` with the
+          original reservation; nothing new is booked.
+        - Seat taken, over the per-user limit, or key reused for a different
+          request → `409` with a `reason`. Never a 5xx.
+
+        Seats in the response are sorted. The key may be sent in the body or the
+        `Idempotency-Key` header; if both are sent they must match.
+      operationId: reserve
+      security: [{ userToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ShowId"
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Alternative to `idempotency_key` in the body. Must be a UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReserveRequest" }
+            example:
+              seats: [A12, A13]
+              idempotency_key: 3f1c2a9e-7b4d-4c1e-9a52-1d2e3f4a5b6c
+      responses:
+        "201":
+          description: Reserved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reservation" }
+              example:
+                reservation_id: 631d7bc6-cc03-43ae-905e-712fd22a4e74
+                show_id: 0ccfe01f-1690-44f0-93e1-401db334b6ba
+                user_id: alice
+                seats: [A12, A13]
+                amount_paise: 50000
+                status: confirmed
+        "200":
+          description: Idempotent replay — the original reservation (may since have been cancelled)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reservation" }
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unknownSeats:
+                  value:
+                    reason: validation_error
+                    message: Seats Z99, a3 do not exist in this show (labels are case-sensitive).
+                    field: seats
+                    unknown_seats: [Z99, a3]
+                duplicateSeats:
+                  value:
+                    reason: validation_error
+                    message: Each seat may appear only once in a request.
+                    field: seats
+                    duplicate_seats: [A12]
+                keyNotUuid:
+                  value:
+                    reason: validation_error
+                    message: idempotency_key must be a UUID. Generate a UUID once per booking and reuse it only when retrying that same booking.
+                    field: idempotency_key
+        "401": { $ref: "#/components/responses/UserUnauthorized" }
+        "404": { $ref: "#/components/responses/ShowNotFound" }
+        "409":
+          description: Declined (a clean domain outcome, not an error)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                seatTaken:
+                  value:
+                    reason: seat_taken
+                    message: Seat A12 is no longer available. No seats were reserved.
+                    unavailable_seats: [A12]
+                perUserLimit:
+                  value:
+                    reason: per_user_limit
+                    message: You can reserve 2 more seat(s) for this show (limit 4); this request asks for 3.
+                    limit: 4
+                    already_reserved: 2
+                    remaining: 2
+                    requested: 3
+                requestLargerThanLimit:
+                  value:
+                    reason: per_user_limit
+                    message: You can reserve at most 4 seats for this show; this request asks for 5.
+                    limit: 4
+                    requested: 5
+                idempotencyConflict:
+                  value:
+                    reason: idempotent_replay_conflict
+                    message: This idempotency key was already used to reserve [A12 A13]. Use a new key for a different request.
+                    reservation_id: 631d7bc6-cc03-43ae-905e-712fd22a4e74
+                    original_show_id: 0ccfe01f-1690-44f0-93e1-401db334b6ba
+                    original_seats: [A12, A13]
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+      x-codeSamples:
+        - lang: curl
+          label: Reserve
+          source: |
+            KEY=$(uuidgen)
+            curl -s -X POST $BASE/shows/$SHOW_ID/reserve \
+              -H 'Authorization: Bearer alice' \
+              -H 'Content-Type: application/json' \
+              -d "{\"seats\":[\"A12\",\"A13\"],\"idempotency_key\":\"$KEY\"}"
+        - lang: curl
+          label: Retry (same key → 200, same reservation)
+          source: |
+            curl -s -X POST $BASE/shows/$SHOW_ID/reserve \
+              -H 'Authorization: Bearer alice' \
+              -H "Idempotency-Key: $KEY" \
+              -H 'Content-Type: application/json' \
+              -d '{"seats":["A13","A12"]}'
+
+  /reservations/{id}/cancel:
+    post:
+      tags: [Reservations]
+      summary: Cancel a reservation (owner only)
+      description: |
+        Releases the reservation's seats back to `available`; they can be booked
+        again immediately. Cancelling twice returns the cancelled reservation
+        (200). Someone else's reservation is reported as not found (404) so its
+        existence isn't revealed.
+      operationId: cancelReservation
+      security: [{ userToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: reservation_id returned by reserve
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Cancelled (or already cancelled)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reservation" }
+              example:
+                reservation_id: 631d7bc6-cc03-43ae-905e-712fd22a4e74
+                show_id: 0ccfe01f-1690-44f0-93e1-401db334b6ba
+                user_id: alice
+                seats: [A12, A13]
+                amount_paise: 50000
+                status: cancelled
+                cancelled_at: "2026-10-03T07:20:11.104512Z"
+        "400":
+          description: Reservation id is not a UUID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                reason: validation_error
+                message: Reservation id must be a UUID, as returned by POST /shows/{id}/reserve.
+                field: id
+        "401": { $ref: "#/components/responses/UserUnauthorized" }
+        "404":
+          description: No such reservation for this user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                reason: reservation_not_found
+                message: No reservation with this id exists for your account.
+                reservation_id: 631d7bc6-cc03-43ae-905e-712fd22a4e74
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl -s -X POST $BASE/reservations/$RESERVATION_ID/cancel \
+              -H 'Authorization: Bearer alice'
+
+components:
+  securitySchemes:
+    userToken:
+      type: http
+      scheme: bearer
+      description: The token is the user id (testing simplification; see DESIGN.md §13 E1).
+    adminKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Key
+
+  parameters:
+    ShowId:
+      name: id
+      in: path
+      required: true
+      description: Show id returned by POST /shows
+      schema: { type: string, format: uuid }
+
+  responses:
+    AdminUnauthorized:
+      description: Missing or wrong admin key
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { reason: unauthorized, message: Invalid admin key. }
+    UserUnauthorized:
+      description: Missing or malformed bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            reason: unauthorized
+            message: "Missing bearer token. Send Authorization: Bearer <user_token>."
+    InvalidShowId:
+      description: Show id is not a UUID
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            reason: validation_error
+            message: Show id must be a UUID, as returned by POST /shows.
+            field: id
+    ShowNotFound:
+      description: No show with this id
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            reason: show_not_found
+            message: No show exists with this id.
+            show_id: 00000000-0000-0000-0000-000000000000
+    PayloadTooLarge:
+      description: Body over 8 MiB
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { reason: payload_too_large, message: Request body exceeds the 8 MiB limit. }
+
+  schemas:
+    CreateShowRequest:
+      type: object
+      required: [name, seats, price_paise]
+      properties:
+        name: { type: string, maxLength: 200, description: Trimmed; must not be empty }
+        seats:
+          type: array
+          minItems: 1
+          maxItems: 100000
+          items: { type: string, minLength: 1, maxLength: 32 }
+          description: Unique, case-sensitive labels with no leading or trailing spaces
+        price_paise: { type: integer, format: int64, minimum: 0, description: Integer paise; decimals are rejected }
+        per_user_limit: { type: integer, minimum: 1, default: 4 }
+
+    ReserveRequest:
+      type: object
+      required: [seats]
+      properties:
+        seats:
+          type: array
+          minItems: 1
+          items: { type: string }
+          description: Labels in any order, no duplicates
+        idempotency_key:
+          type: string
+          format: uuid
+          description: Required here or in the Idempotency-Key header
+      description: Any user_id field is ignored; identity comes only from the token.
+
+    SeatStatus:
+      type: string
+      enum: [available, held, confirmed]
+      description: "`held` exists in the model but the current flow never produces it (reserve confirms directly)."
+
+    Seat:
+      type: object
+      properties:
+        label: { type: string }
+        status: { $ref: "#/components/schemas/SeatStatus" }
+
+    SeatCounts:
+      type: object
+      properties:
+        available: { type: integer }
+        held: { type: integer }
+        confirmed: { type: integer }
+        total: { type: integer }
+
+    ShowDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        price_paise: { type: integer, format: int64 }
+        per_user_limit: { type: integer }
+        created_at: { type: string, format: date-time, description: UTC }
+        counts: { $ref: "#/components/schemas/SeatCounts" }
+        seats:
+          type: array
+          items: { $ref: "#/components/schemas/Seat" }
+          description: In the order given at creation
+
+    Reservation:
+      type: object
+      properties:
+        reservation_id: { type: string, format: uuid }
+        show_id: { type: string, format: uuid }
+        user_id: { type: string, description: From the token }
+        seats: { type: array, items: { type: string }, description: Sorted }
+        amount_paise: { type: integer, format: int64, description: price_paise × number of seats }
+        status: { type: string, enum: [confirmed, cancelled] }
+        cancelled_at: { type: string, format: date-time, nullable: true, description: Present once cancelled (UTC) }
+
+    Error:
+      type: object
+      required: [reason, message]
+      properties:
+        reason:
+          type: string
+          description: Stable machine-readable code (also the metric label for declines)
+          enum:
+            - validation_error
+            - unauthorized
+            - show_not_found
+            - reservation_not_found
+            - seat_taken
+            - per_user_limit
+            - idempotent_replay_conflict
+            - payload_too_large
+            - route_not_found
+            - method_not_allowed
+            - database_unreachable
+            - internal_error
+        message: { type: string, description: Human-readable explanation and next step }
+        field: { type: string, description: The request field at fault (validation errors) }
+      additionalProperties: true
+      description: |
+        Context fields vary by reason — e.g. `unavailable_seats`, `unknown_seats`,
+        `duplicate_seats`, `limit` / `already_reserved` / `remaining` / `requested`,
+        `reservation_id` / `original_seats` / `original_show_id`.
